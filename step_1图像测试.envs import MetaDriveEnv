@@ -1,0 +1,40 @@
+from metadrive.envs import MetaDriveEnv
+from stable_baselines3 import PPO
+from stable_baselines3.common.vec_env import SubprocVecEnv
+from stable_baselines3.common.utils import set_random_seed
+from stable_baselines3.common.monitor import Monitor
+from functools import partial
+
+
+
+def create_env(need_monitor=False):
+    env = MetaDriveEnv(dict(
+    image_observation=True,
+    stack_size=3,
+    sensors={"rgb_camera": (RGBCamera, 84, 60)},
+    vehicle_config=dict(image_source="rgb_camera"),
+    use_render=False,
+    traffic_density=0,
+))
+    if need_monitor:
+        env = Monitor(env)
+    return env
+
+
+if __name__ == "__main__":
+    from metadrive.component.sensors.rgb_camera import RGBCamera
+    from metadrive.envs.metadrive_env import MetaDriveEnv
+    from metadrive.constants import DEFAULT_AGENT
+    import numpy as np
+
+    path = r"C:\Users\37945\OneDrive\Desktop\sac_metadrive"
+    sensor_size = (84, 60)
+    set_random_seed(0)
+    train_env = SubprocVecEnv([partial(create_env, True) for _ in range(1)])
+    model = PPO("MultiInputPolicy", train_env, n_steps=4096, verbose=1, device="cuda", tensorboard_log=path)
+    #model = PPO("MlpPolicy", train_env, n_steps=4096, verbose=1, device="cuda",tensorboard_log=path)
+    model.learn(total_timesteps=1000000, log_interval=4)
+    model.save(path) 
+
+    #conclusion
+    #加大模型训练步数

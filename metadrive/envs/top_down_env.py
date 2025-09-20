@@ -12,8 +12,8 @@ class TopDownSingleFrameMetaDriveEnv(MetaDriveEnv):
         config.update(
             {
                 "frame_skip": 5,
-                "frame_stack": 3,
-                "post_stack": 5,
+                "frame_stack": 1, #3
+                "post_stack": 1, #5
                 "norm_pixel": True,
                 "resolution_size": 84,
                 "distance": 30

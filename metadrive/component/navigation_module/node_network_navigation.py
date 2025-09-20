@@ -39,6 +39,8 @@ class NodeNetworkNavigation(BaseNavigation):
         self.spawn_road = None
         self.current_road = None
         self.next_road = None
+        self.last_route_completion = 0.0
+
 
     def reset(self, vehicle, dest=None, random_seed=None):
         possible_lanes = ray_localization(vehicle.heading, vehicle.spawn_place, self.engine, use_heading_filter=False)
@@ -67,6 +69,8 @@ class NodeNetworkNavigation(BaseNavigation):
         assert self.map.road_network_type == NodeRoadNetwork, "This Navigation module only support NodeRoadNetwork type"
         destination = self.auto_assign_task(self.map, current_lane.index, destination, random_seed)
         self.set_route(current_lane.index, destination)
+        self.last_route_completion = 0.0
+
 
     @staticmethod
     def auto_assign_task(map, current_lane_index, final_road_node=None, random_seed=None):

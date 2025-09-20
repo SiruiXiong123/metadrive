@@ -50,7 +50,8 @@ class TopDownMultiChannel(TopDownObservation):
         super(TopDownMultiChannel, self).__init__(
             vehicle_config, clip_rgb, onscreen=onscreen, resolution=resolution, max_distance=max_distance
         )
-        self.num_stacks = 2 + frame_stack
+        #self.num_stacks = 2 + frame_stack
+        self.num_stacks = 2
         self.stack_traffic_flow = deque([], maxlen=(frame_stack - 1) * frame_skip + 1)
         self.stack_past_pos = deque(
             [], maxlen=(post_stack - 1) * frame_skip + 1
@@ -243,13 +244,13 @@ class TopDownMultiChannel(TopDownObservation):
         # Gray scale
         img_dict = {k: self._transform(img) for k, img in img_dict.items()}
 
-        if self._should_fill_stack:
-            self.stack_past_pos.clear()
-            self.stack_traffic_flow.clear()
-            for _ in range(self.stack_traffic_flow.maxlen):
-                self.stack_traffic_flow.append(img_dict["traffic_flow"])
-            self._should_fill_stack = False
-        self.stack_traffic_flow.append(img_dict["traffic_flow"])
+        # if self._should_fill_stack:
+        #     self.stack_past_pos.clear()
+        #     self.stack_traffic_flow.clear()
+        #     for _ in range(self.stack_traffic_flow.maxlen):
+        #         self.stack_traffic_flow.append(img_dict["traffic_flow"])
+        #     self._should_fill_stack = False
+        # self.stack_traffic_flow.append(img_dict["traffic_flow"])
 
         img = [
             img_dict["road_network"] * 2,
@@ -268,8 +269,8 @@ class TopDownMultiChannel(TopDownObservation):
         #     stacked = np.clip(stacked, 0.0, 1.0)
         # else:
         #     stacked = np.clip(stacked, 0, 255)
-        for i in indices:
-            img.append(self.stack_traffic_flow[i])
+        # for i in indices:
+        #     img.append(self.stack_traffic_flow[i])
 
         # Stack
         img = np.stack(img, axis=2)
