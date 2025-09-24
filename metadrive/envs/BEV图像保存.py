@@ -76,12 +76,11 @@ def get_bev_hwc(obs):
 def show_bev_multi(bev_hwc):
     """显示多通道 BEV 图像（不保存）"""
     channel_names = [
-        "Road and navigation",
-        "Ego now and previous pos",
-        "Neighbor at step t",
-        "Neighbor at step t-1",
-        "Neighbor at step t-2"
-    ]
+    "Road network",
+    "road lines",
+    "past_pos",
+    ]   
+
     C = bev_hwc.shape[-1]
     titles = channel_names[:C] + [f"Channel {i}" for i in range(len(channel_names), C)]
     plt.figure(figsize=(3 * C, 4), dpi=150)
@@ -97,8 +96,9 @@ def show_bev_multi(bev_hwc):
 if __name__ == "__main__":
     env = TopDownMetaDrive(dict(
         num_scenarios=1,
+        # use_render=True,
         start_seed=123,
-        use_render=False
+
     ))
     try:
         obs, _ = env.reset()

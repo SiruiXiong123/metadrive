@@ -330,6 +330,27 @@ class MetaDriveEnv(BaseEnv):
     def reward_function(self, vehicle_id: str):
         vehicle = self.agents[vehicle_id]
         step_info = dict()
+
+        print("Vehicle position:", vehicle.position)
+        nav = vehicle.navigation
+        ref_lane_cur = vehicle.navigation.current_ref_lanes[0]
+        # 下一参考车道
+        ref_lane_next = (
+        nav.next_ref_lanes[0] if nav.next_ref_lanes is not None else ref_lane_cur)
+
+        # lanes_id=0 → 当前路段
+        _, _, cp_cur = nav._get_info_for_checkpoint(
+            lanes_id=0, ref_lane=ref_lane_cur, ego_vehicle=vehicle
+        )
+
+        # lanes_id=1 → 下一路段
+        _, _, cp_next = nav._get_info_for_checkpoint(
+            lanes_id=1, ref_lane=ref_lane_next, ego_vehicle=vehicle
+        )
+
+        print("[DEBUG] Current checkpoint (world coords):", cp_cur)
+        print("[DEBUG] Next checkpoint (world coords):", cp_next)
+
         reward = 0.0
 
         # # ===== 1. out-of-road 风险 =====

@@ -459,21 +459,21 @@ class LaneGraphics:
 
 
 class ObservationWindowMultiChannel:
-    CHANNEL_NAMES = ["road_network", "traffic_flow", "target_vehicle", "past_pos"]
+    CHANNEL_NAMES = ["road_network", "road_lines", "traffic_flow", "target_vehicle", "past_pos"]
 
     def __init__(self, names, max_range, resolution):
         assert isinstance(names, list)
-        assert set(self.CHANNEL_NAMES)
-        self.sub_observations = {
-            k: ObservationWindow(max_range=max_range, resolution=resolution)
-            for k in ["traffic_flow", "target_vehicle"]
-        }
-        self.sub_observations["road_network"] = ObservationWindow(
-            max_range=max_range,
-            resolution=(resolution[0] * 2, resolution[1] * 2)
-            # max_range=max_range, resolution=resolution
-        )
+        # Build sub-observations dynamically according to names passed in.
+        self.sub_observations = dict()
+        for n in names:
+            # For road-like channels we create a bigger observation (higher resolution)
+            if n in ("road_network", "road_lines"):
+                self.sub_observations[n] = ObservationWindow(max_range=max_range, resolution=(resolution[0] * 2, resolution[1] * 2))
+            else:
+                self.sub_observations[n] = ObservationWindow(max_range=max_range, resolution=resolution)
 
+        # The internal canvas/display resolution corresponds to the larger (road) resolution
+        # keep as doubled so road channels align
         self.resolution = (resolution[0] * 2, resolution[1] * 2)
         self.canvas_display = None
 
@@ -507,9 +507,13 @@ class ObservationWindowMultiChannel:
         canvas = self.get_canvas_display()
         ret = self.get_observation_window()
 
-        for k in ret.keys():
-            if k == "road_network":
+        # Scale small-channel surfaces (they were rendered at normal resolution) up to the
+        # doubled internal resolution so everything lines up with road channels.
+        for k in list(ret.keys()):
+            if k in ("road_network", "road_lines"):
+                # These are already in doubled resolution, leave them
                 continue
+            # scale up others
             ret[k] = pygame.transform.scale2x(ret[k])
 
         def _draw(canvas, key, color):
@@ -518,7 +522,13 @@ class ObservationWindowMultiChannel:
 
         if "navigation" in ret:
             _draw(canvas, "navigation", pygame.Color("Blue"))
-        _draw(canvas, "road_network", pygame.Color("White"))
-        _draw(canvas, "traffic_flow", pygame.Color("Red"))
-        _draw(canvas, "target_vehicle", pygame.Color("Green"))
+        # draw both road network fill/lines and the separate road_lines channel
+        if "road_network" in ret:
+            _draw(canvas, "road_network", pygame.Color("White"))
+        if "road_lines" in ret:
+            _draw(canvas, "road_lines", pygame.Color("White"))
+        if "traffic_flow" in ret:
+            _draw(canvas, "traffic_flow", pygame.Color("Red"))
+        if "target_vehicle" in ret:
+            _draw(canvas, "target_vehicle", pygame.Color("Green"))
         return canvas
