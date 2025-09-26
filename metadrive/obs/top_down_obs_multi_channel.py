@@ -267,21 +267,65 @@ class TopDownMultiChannel(TopDownObservation):
                 except Exception:
                     pts_world = None
 
+                if getattr(self, "debug_chk", False):
+                    try:
+                        nav_type = type(nav).__name__ if nav is not None else "None"
+                        if pts_world is None:
+                            print(f"DEBUG: nav type={nav_type}, discretize_reference_trajectory returned None")
+                        else:
+                            print(f"DEBUG: nav type={nav_type}, sampled pts_count={len(pts_world)}, first3={pts_world[:3]}")
+                    except Exception:
+                        pass
+
                 if pts_world and len(pts_world) >= 2:
                     # draw on a per-scene copy to avoid mutating persistent canvas
                     road_lines_for_scene = self.canvas_road_lines.copy()
                     try:
-                        pix_pts = [road_lines_for_scene.vec2pix([p[0], p[1]]) for p in pts_world]
+                        # convert to pixel coordinates
+                        pix_pts = [road_lines_for_scene.vec2pix([float(p[0]), float(p[1])]) for p in pts_world]
                         import math as _math
-                        width_outline = max(2, int(_math.ceil(6 * 2)))
-                        width_core = max(1, int(_math.ceil(3 * 2)))
-                        # draw outline then core for visibility
+                        # make the trajectory very visible: wide dark outline + bright colored core
+                        width_outline = max(4, int(_math.ceil(8)))
+                        width_core = max(2, int(_math.ceil(4)))
+
+                        # draw heavy outline first
                         try:
                             pygame.draw.lines(road_lines_for_scene, (0, 0, 0), False, pix_pts, width_outline)
                         except Exception:
                             pass
+                        # draw colored core (blue-ish) on top
                         try:
-                            pygame.draw.lines(road_lines_for_scene, (255, 255, 255), False, pix_pts, width_core)
+                            pygame.draw.lines(road_lines_for_scene, (50, 150, 255), False, pix_pts, width_core)
+                        except Exception:
+                            pass
+
+                        # draw end caps (start and goal) as filled circles to make them obvious
+                        try:
+                            sx, sy = int(round(pix_pts[0][0])), int(round(pix_pts[0][1]))
+                            ex, ey = int(round(pix_pts[-1][0])), int(round(pix_pts[-1][1]))
+                            pygame.draw.circle(road_lines_for_scene, (0, 0, 0), (sx, sy), width_outline + 2)
+                            pygame.draw.circle(road_lines_for_scene, (255, 255, 255), (sx, sy), width_core)
+                            pygame.draw.circle(road_lines_for_scene, (0, 0, 0), (ex, ey), width_outline + 2)
+                            pygame.draw.circle(road_lines_for_scene, (255, 255, 255), (ex, ey), width_core)
+                        except Exception:
+                            pass
+
+                        # optional additive halo for extra pop (best-effort)
+                        try:
+                            halo_alpha = 120
+                            halo_r = width_outline * 2
+                            halo_surf = pygame.Surface((halo_r * 2 + 4, halo_r * 2 + 4), pygame.SRCALPHA)
+                            c = (halo_r + 2, halo_r + 2)
+                            pygame.draw.circle(halo_surf, (100, 180, 255, halo_alpha), c, halo_r)
+                            # blit halo at several sample points to enhance visibility
+                            for i, (px, py) in enumerate(pix_pts[:: max(1, len(pix_pts)//10)]):
+                                try:
+                                    road_lines_for_scene.blit(halo_surf, (int(px) - c[0], int(py) - c[1]), special_flags=pygame.BLEND_ADD)
+                                except Exception:
+                                    try:
+                                        road_lines_for_scene.blit(halo_surf, (int(px) - c[0], int(py) - c[1]))
+                                    except Exception:
+                                        pass
                         except Exception:
                             pass
                     except Exception:
@@ -289,6 +333,12 @@ class TopDownMultiChannel(TopDownObservation):
                 else:
                     road_lines_for_scene = self.canvas_road_lines
             else:
+                # not a TrajectoryNavigation; keep base road_lines
+                if getattr(self, "debug_chk", False):
+                    try:
+                        print(f"DEBUG: navigation backend is {type(nav).__name__}, not TrajectoryNavigation")
+                    except Exception:
+                        pass
                 road_lines_for_scene = self.canvas_road_lines
         except Exception:
             # on any unexpected issue fallback to persistent canvas
