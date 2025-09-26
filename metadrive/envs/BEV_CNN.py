@@ -99,19 +99,38 @@ from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
 
 
 class CustomBEVCNN(BaseFeaturesExtractor):
-    def __init__(self, observation_space: gym.spaces.Box, features_dim: int = 256):
+    def __init__(self, observation_space: gym.spaces.Box, features_dim: int = 256,
+                 per_channel_dim: int = None, return_per_channel: bool = False):
+        """Feature extractor.
+
+        Args:
+            observation_space: gym Box with shape (H,W,C) or (H,W)
+            features_dim: output feature dim (default for SB3)
+            per_channel_dim: if set, additionally compute a per-channel feature
+                vector of this dimension for every input channel and return it
+                when `return_per_channel` is True.
+            return_per_channel: whether forward() should return the per-channel
+                codes along with the fused features. Default False (keeps SB3
+                compatibility: returns single tensor).
+        """
         super().__init__(observation_space, features_dim)
 
-        # Expect observation_space.shape == (H, W, C). For this project we
-        # hard-code the feature extractor to accept exactly 2 channels:
-        # channel 0 = road_network, channel 1 = road_lines.
-        self.H, self.W, _ = observation_space.shape
-        self.C = 2
-        if observation_space.shape[-1] != self.C:
-            raise AssertionError(
-                f"CustomBEVCNN is hard-coded to accept 2 channels (road_network, road_lines), "
-                f"but observation_space.shape is {observation_space.shape}."
-            )
+        # Parse observation space shape robustly. We expect either (H, W, C)
+        # or (H, W) for single-channel observations. Do not hard-code C.
+        shape = getattr(observation_space, "shape", None)
+        if shape is None:
+            raise AssertionError(f"observation_space has no 'shape' attribute: {observation_space}")
+
+        if len(shape) == 3:
+            self.H, self.W, self.C = int(shape[0]), int(shape[1]), int(shape[2])
+        elif len(shape) == 2:
+            # (H, W) -> single channel
+            self.H, self.W, self.C = int(shape[0]), int(shape[1]), 1
+        else:
+            raise AssertionError(f"Unexpected observation shape {tuple(shape)}; expected (H,W,C) or (H,W)")
+
+        if self.C <= 0:
+            raise AssertionError(f"Invalid channel count: {self.C}")
 
         # 定义单通道 CNN 分支（每个输入通道一个分支）
         def make_branch():
@@ -132,6 +151,9 @@ class CustomBEVCNN(BaseFeaturesExtractor):
 
         # 动态创建与输入通道数一致的分支集合
         self.branches = nn.ModuleList([make_branch() for _ in range(self.C)])
+        # Optionally compute per-channel codes
+        self.per_channel_dim = per_channel_dim
+        self.return_per_channel = return_per_channel
 
         # 自动计算每个分支的展平维度（现在应当等于最后 conv 的通道数因为我们用全局池化）
         with torch.no_grad():
@@ -139,6 +161,14 @@ class CustomBEVCNN(BaseFeaturesExtractor):
             n_flatten = self.branches[0](sample_input).shape[1]
 
         self.feature_dim = n_flatten
+
+        # If requested, add a small head to map per-branch descriptors to
+        # a compact per-channel code of size `per_channel_dim`.
+        if self.per_channel_dim is not None:
+            self.per_channel_head = nn.Sequential(
+                nn.Linear(self.feature_dim, self.per_channel_dim),
+                nn.ReLU()
+            )
 
         # 注意力模块（Squeeze-Excitation 风格），把中间瓶颈缩小以避免巨大的全连接矩阵
         hidden = max(4, n_flatten // 4)
@@ -194,6 +224,12 @@ class CustomBEVCNN(BaseFeaturesExtractor):
             fi = self.branches[i](xi)
             feats_list.append(fi)
 
+        # If requested, compute per-channel compact codes (B, C, per_channel_dim)
+        per_channel_codes = None
+        if self.per_channel_dim is not None:
+            per_codes = [self.per_channel_head(f) for f in feats_list]
+            per_channel_codes = torch.stack(per_codes, dim=1)
+
         # 堆成 (B, C, feature_dim)
         feats = torch.stack(feats_list, dim=1)
 
@@ -202,5 +238,8 @@ class CustomBEVCNN(BaseFeaturesExtractor):
         weights = weights.unsqueeze(1)          # (B,1,feature_dim)
         fused = (feats * weights).sum(dim=1)    # (B, feature_dim)
 
-        # 最终映射
-        return self.linear(fused)
+        # 最终映射（default behavior: return single fused feature vector)
+        fused_out = self.linear(fused)
+        if self.return_per_channel:
+            return fused_out, per_channel_codes
+        return fused_out

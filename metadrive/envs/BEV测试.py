@@ -43,7 +43,7 @@ if __name__ == '__main__':
 
     env = create_env_for_testing()
     #PPO_Path = r"C:\Users\37945\OneDrive\Desktop\ppo_topdown_bev.zip"
-    PPO_Path = r"C:\Users\37945\OneDrive\Desktop\dingding\ppo_topdown_bev_final_ckpt.zip"
+    PPO_Path = r"C:\Users\37945\OneDrive\Desktop\dingding\1.混合通道BEV\ppo_topdown_bev_final"
 
 
     model = PPO.load(PPO_Path, env=env)

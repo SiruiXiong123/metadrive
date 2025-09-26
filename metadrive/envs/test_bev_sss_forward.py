@@ -55,6 +55,9 @@ if __name__ == '__main__':
         num_scenarios=1,
         start_seed=0,
         use_render=False,
+        # use_render=True,
+        distance=20,
+        resolution_size=120,
         # ensure image observation is enabled for top-down env
         # TopDownMetaDrive generally returns top-down BEV as `image` in obs
     )

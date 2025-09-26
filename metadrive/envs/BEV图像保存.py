@@ -99,10 +99,10 @@ if __name__ == "__main__":
         num_scenarios=1,
         # use_render=True,
         start_seed=123,
-        distance=48,
-        resolution_size=192,
-
+        distance=20,
+        resolution_size=120,
     ))
+    
     try:
         obs, _ = env.reset()
         bev_hwc = get_bev_hwc(obs)

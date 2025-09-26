@@ -52,8 +52,7 @@ def main():
         tensorboard_log=path,
     )
 
-    # Checkpoint callback: save every 500,000 timesteps (50W = 500k)
-    checkpoint_cb = CheckpointCallback(save_freq=500_000, save_path=path, name_prefix='rl_model')
+    checkpoint_cb = CheckpointCallback(save_freq=100_000, save_path=path, name_prefix='rl_model')
 
     # Combine with your metrics callback
     callback_list = CallbackList([checkpoint_cb, MetaDriveMetricsCallback()])

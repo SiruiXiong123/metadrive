@@ -368,6 +368,74 @@ class TopDownMultiChannel(TopDownObservation):
                 pygame.draw.circle(road_lines_for_scene, (255, 255, 255), cur_world_pix, radius)
                 pygame.draw.circle(road_lines_for_scene, (0, 0, 0), nxt_world_pix, outline)
                 pygame.draw.circle(road_lines_for_scene, (255, 255, 255), nxt_world_pix, radius)
+
+                # --- draw connecting line between the two checkpoints ---
+                try:
+                    start = (int(round(cur_world_pix[0])), int(round(cur_world_pix[1])))
+                    end = (int(round(nxt_world_pix[0])), int(round(nxt_world_pix[1])))
+                    # Use checkpoint's outline and white core diameters to set line widths
+                    import math as _math
+                    width_outline = max(1, int(_math.ceil(outline * 2)))
+                    width_core = max(1, int(_math.ceil(radius * 2)))
+
+                    # Replace line drawing with a polygon-based thick stroke so the
+                    # width is exact and uniform across the segment (avoids thin
+                    # middle caused by backend line cap behavior).
+                    try:
+                        sx, sy = float(cur_world_pix[0]), float(cur_world_pix[1])
+                        ex, ey = float(nxt_world_pix[0]), float(nxt_world_pix[1])
+                        dx, dy = ex - sx, ey - sy
+                        dist = max(1e-6, (dx * dx + dy * dy) ** 0.5)
+                        # normal vector (unit)
+                        nx, ny = -dy / dist, dx / dist
+
+                        half_outline = float(width_outline) / 2.0
+                        half_core = float(width_core) / 2.0
+
+                        # Outer polygon (black)
+                        pts_outer = [
+                            (sx + nx * half_outline, sy + ny * half_outline),
+                            (sx - nx * half_outline, sy - ny * half_outline),
+                            (ex - nx * half_outline, ey - ny * half_outline),
+                            (ex + nx * half_outline, ey + ny * half_outline),
+                        ]
+                        # Inner polygon (white core)
+                        pts_core = [
+                            (sx + nx * half_core, sy + ny * half_core),
+                            (sx - nx * half_core, sy - ny * half_core),
+                            (ex - nx * half_core, ey - ny * half_core),
+                            (ex + nx * half_core, ey + ny * half_core),
+                        ]
+
+                        # Draw filled outer then inner polygon
+                        try:
+                            pygame.draw.polygon(road_lines_for_scene, (0, 0, 0), pts_outer)
+                        except Exception:
+                            # Fallback: draw a thick line if polygon fails
+                            pygame.draw.line(road_lines_for_scene, (0, 0, 0), start, end, width=width_outline)
+
+                        try:
+                            pygame.draw.polygon(road_lines_for_scene, (255, 255, 255), pts_core)
+                        except Exception:
+                            pygame.draw.line(road_lines_for_scene, (255, 255, 255), start, end, width=width_core)
+
+                        # Draw circular end caps that match the outer/core radii
+                        cap_r_outline = max(1, int(_math.ceil(half_outline)))
+                        cap_r_core = max(1, int(_math.ceil(half_core)))
+                        pygame.draw.circle(road_lines_for_scene, (0, 0, 0), (int(round(sx)), int(round(sy))), cap_r_outline)
+                        pygame.draw.circle(road_lines_for_scene, (0, 0, 0), (int(round(ex)), int(round(ey))), cap_r_outline)
+                        pygame.draw.circle(road_lines_for_scene, (255, 255, 255), (int(round(sx)), int(round(sy))), cap_r_core)
+                        pygame.draw.circle(road_lines_for_scene, (255, 255, 255), (int(round(ex)), int(round(ey))), cap_r_core)
+                    except Exception:
+                        # Best-effort: do not crash rendering
+                        try:
+                            pygame.draw.line(road_lines_for_scene, (0, 0, 0), start, end, width=width_outline)
+                            pygame.draw.line(road_lines_for_scene, (255, 255, 255), start, end, width=width_core)
+                        except Exception:
+                            pass
+                except Exception:
+                    # Do not let line drawing break rendering
+                    pass
                 # --- DEBUG: verify that vec2pix mapped pixels contain the drawn marker ---
                 try:
                     if getattr(self, "debug_chk", False):
