@@ -257,8 +257,42 @@ class TopDownMultiChannel(TopDownObservation):
     # Debug print disabled: avoid noisy repeated logging during rendering
     # print("Navigation type:", type(self.target_vehicle.navigation))
 
-        # Trajectory drawing disabled: use persistent road_lines canvas for this scene
-        road_lines_for_scene = self.canvas_road_lines
+        # Try to draw discretized trajectory into per-scene copy when available
+        try:
+            nav = self.target_vehicle.navigation
+            if isinstance(nav, TrajectoryNavigation):
+                pts_world = None
+                try:
+                    pts_world = nav.discretize_reference_trajectory()
+                except Exception:
+                    pts_world = None
+
+                if pts_world and len(pts_world) >= 2:
+                    # draw on a per-scene copy to avoid mutating persistent canvas
+                    road_lines_for_scene = self.canvas_road_lines.copy()
+                    try:
+                        pix_pts = [road_lines_for_scene.vec2pix([p[0], p[1]]) for p in pts_world]
+                        import math as _math
+                        width_outline = max(2, int(_math.ceil(6 * 2)))
+                        width_core = max(1, int(_math.ceil(3 * 2)))
+                        # draw outline then core for visibility
+                        try:
+                            pygame.draw.lines(road_lines_for_scene, (0, 0, 0), False, pix_pts, width_outline)
+                        except Exception:
+                            pass
+                        try:
+                            pygame.draw.lines(road_lines_for_scene, (255, 255, 255), False, pix_pts, width_core)
+                        except Exception:
+                            pass
+                    except Exception:
+                        road_lines_for_scene = self.canvas_road_lines
+                else:
+                    road_lines_for_scene = self.canvas_road_lines
+            else:
+                road_lines_for_scene = self.canvas_road_lines
+        except Exception:
+            # on any unexpected issue fallback to persistent canvas
+            road_lines_for_scene = self.canvas_road_lines
 
         # Now render the observation windows using the possibly-updated road_lines surface
         # Draw ego/world vehicle position onto the road_lines copy so it appears in channel 1
