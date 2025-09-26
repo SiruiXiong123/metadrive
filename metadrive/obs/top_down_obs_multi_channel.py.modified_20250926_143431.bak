@@ -111,7 +111,7 @@ class TopDownMultiChannel(TopDownObservation):
     
 
 
-    def draw_map(self):
+    def draw_map(self) -> pygame.Surface:
         """
         :return: a big map surface, clip  and rotate to use a piece of it
         """
@@ -257,8 +257,117 @@ class TopDownMultiChannel(TopDownObservation):
     # Debug print disabled: avoid noisy repeated logging during rendering
     # print("Navigation type:", type(self.target_vehicle.navigation))
 
-        # Trajectory drawing disabled: use persistent road_lines canvas for this scene
+        # Generic handling: try to extract a sequence of world-space points
+        # representing the planned route for different navigation modules. If we
+        # get a list of points, draw them into the per-scene road_lines surface
+        # so channel 2 contains the trajectory.
         road_lines_for_scene = self.canvas_road_lines
+        try:
+            nav = self.target_vehicle.navigation
+            pts_world = None
+            nav_type = type(nav).__name__ if nav is not None else "None"
+            # TrajectoryNavigation: use discretized reference trajectory
+            if isinstance(nav, TrajectoryNavigation):
+                pts_world = nav.discretize_reference_trajectory()
+            # NodeNetworkNavigation: sample lane centerlines along checkpoints
+            elif isinstance(nav, NodeNetworkNavigation):
+                pts_world = []
+                try:
+                    for a, b in zip(nav.checkpoints[:-1], nav.checkpoints[1:]):
+                        lanes = self.road_network.graph[a][b]
+                        if len(lanes) == 0:
+                            continue
+                        # pick middle lane for representative centerline
+                        lane = lanes[len(lanes) // 2]
+                        for s in np.linspace(0.0, lane.length, num=40):
+                            p = lane.position(s, 0.0)
+                            pts_world.append((float(p[0]), float(p[1])))
+                except Exception:
+                    pts_world = None
+            # EdgeNetworkNavigation: similar to node network but lanes may be indices
+            elif isinstance(nav, EdgeNetworkNavigation):
+                pts_world = []
+                try:
+                    for a, b in zip(nav.checkpoints[:-1], nav.checkpoints[1:]):
+                        # graph lookup still works for edge networks
+                        lanes = self.road_network.graph[a][b]
+                        if len(lanes) == 0:
+                            continue
+                        lane = lanes[len(lanes) // 2]
+                        for s in np.linspace(0.0, lane.length, num=40):
+                            p = lane.position(s, 0.0)
+                            pts_world.append((float(p[0]), float(p[1])))
+                except Exception:
+                    pts_world = None
+
+            # Debug print of navigation type and whether we sampled points
+            try:
+                if pts_world is None:
+                    print(f"DEBUG: nav type={nav_type}, no trajectory points sampled")
+                else:
+                    print(f"DEBUG: nav type={nav_type}, sampled pts_count={len(pts_world)}")
+            except Exception:
+                pass
+
+            # If we got points, draw them (more visible: glow + thick band)
+            if pts_world and len(pts_world) >= 2:
+                try:
+                    road_lines_for_scene = self.canvas_road_lines.copy()
+                    pix_pts = [road_lines_for_scene.vec2pix([p[0], p[1]]) for p in pts_world]
+                    import math as _math
+
+                    # Visibility parameters
+                    halo_alpha = 180
+                    radius = 6
+                    outline = radius + 4
+                    width_core = max(2, int(_math.ceil(radius * 2)))
+                    width_outline = max(2, int(_math.ceil(outline * 2)))
+
+                    # draw additive halo at each sampled point
+                    try:
+                        for px, py in pix_pts:
+                            prx, pry = int(round(px)), int(round(py))
+                            halo_r = int(outline * 1.5)
+                            size = int(halo_r * 2 + 4)
+                            halo_surf = pygame.Surface((size, size), pygame.SRCALPHA)
+                            c = (size // 2, size // 2)
+                            try:
+                                pygame.draw.circle(halo_surf, (255, 255, 255, halo_alpha), c, halo_r)
+                                road_lines_for_scene.blit(halo_surf, (prx - c[0], pry - c[1]), special_flags=pygame.BLEND_ADD)
+                            except Exception:
+                                # fallback
+                                road_lines_for_scene.blit(halo_surf, (prx - c[0], pry - c[1]))
+                    except Exception:
+                        pass
+
+                    # draw thick band between sampled points
+                    for i in range(len(pix_pts) - 1):
+                        sx, sy = int(round(pix_pts[i][0])), int(round(pix_pts[i][1]))
+                        ex, ey = int(round(pix_pts[i + 1][0])), int(round(pix_pts[i + 1][1]))
+                        try:
+                            pygame.draw.line(road_lines_for_scene, (0, 0, 0), (sx, sy), (ex, ey), width_outline)
+                        except Exception:
+                            pass
+                        try:
+                            pygame.draw.line(road_lines_for_scene, (255, 255, 255), (sx, sy), (ex, ey), width_core)
+                        except Exception:
+                            pass
+
+                    # enlarge end caps
+                    try:
+                        sx, sy = int(round(pix_pts[0][0])), int(round(pix_pts[0][1]))
+                        ex, ey = int(round(pix_pts[-1][0])), int(round(pix_pts[-1][1]))
+                        pygame.draw.circle(road_lines_for_scene, (0, 0, 0), (sx, sy), outline + 2)
+                        pygame.draw.circle(road_lines_for_scene, (255, 255, 255), (sx, sy), radius + 1)
+                        pygame.draw.circle(road_lines_for_scene, (0, 0, 0), (ex, ey), outline + 2)
+                        pygame.draw.circle(road_lines_for_scene, (255, 255, 255), (ex, ey), radius + 1)
+                    except Exception:
+                        pass
+                except Exception:
+                    road_lines_for_scene = self.canvas_road_lines
+        except Exception:
+            # keep default canvas on any unexpected error
+            road_lines_for_scene = self.canvas_road_lines
 
         # Now render the observation windows using the possibly-updated road_lines surface
         # Draw ego/world vehicle position onto the road_lines copy so it appears in channel 1
