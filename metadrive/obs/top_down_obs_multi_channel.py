@@ -50,8 +50,9 @@ class TopDownMultiChannel(TopDownObservation):
 
     # CHANNEL_NAMES = ["road_network", "traffic_flow", "target_vehicle", "navigation", "past_pos"]
     # Add a separate channel that contains road lines only (no drivable area fill)
-    # Use 'target_vehicle' to match the canvas dict keys produced in draw_scene
-    CHANNEL_NAMES = ["road_network", "road_lines", "traffic_flow", "target_vehicle", "past_pos"]
+    # Keep channel list consistent with ObservationWindowMultiChannel. We intentionally
+    # limit the BEV to two channels (road_network, road_lines) — past_pos is disabled.
+    CHANNEL_NAMES = ["road_network", "road_lines"]
 
     def __init__(
         self,
@@ -68,8 +69,8 @@ class TopDownMultiChannel(TopDownObservation):
             vehicle_config, clip_rgb, onscreen=onscreen, resolution=resolution, max_distance=max_distance
         )
         #self.num_stacks = 2 + frame_stack
-        # now we have: road_network, road_lines, past_pos -> 3 channels
-        self.num_stacks = 3
+        # now we have: road_network, road_lines -> 2 channels
+        self.num_stacks = 2
         self.stack_traffic_flow = deque([], maxlen=(frame_stack - 1) * frame_skip + 1)
         self.stack_past_pos = deque(
             [], maxlen=(post_stack - 1) * frame_skip + 1
@@ -77,14 +78,18 @@ class TopDownMultiChannel(TopDownObservation):
         self.frame_stack = frame_stack
         self.frame_skip = frame_skip
         self._should_fill_stack = True
+        # Temporary debug flag: when True, verify checkpoint vec2pix mapping by
+        # inspecting pixels on the per-scene road_lines surface and saving
+        # annotated debug images on mismatch. Turn off after debugging.
+        self.debug_chk = True
         self.max_distance = max_distance
         self.scaling = self.resolution[0] / max_distance
         assert self.scaling == self.resolution[1] / self.max_distance
 
     def init_obs_window(self):
-        names = self.CHANNEL_NAMES.copy()
-        names.remove("past_pos")
-        self.obs_window = ObservationWindowMultiChannel(names, (self.max_distance, self.max_distance), self.resolution)
+        # ObservationWindowMultiChannel expects the list of channel names that will
+        # be provided in canvas_dict when rendering. We use the CHANNEL_NAMES directly.
+        self.obs_window = ObservationWindowMultiChannel(self.CHANNEL_NAMES.copy(), (self.max_distance, self.max_distance), self.resolution)
 
     def init_canvas(self):
         self.canvas_background = WorldSurface(self.MAP_RESOLUTION, 0, pygame.Surface(self.MAP_RESOLUTION))
@@ -94,7 +99,8 @@ class TopDownMultiChannel(TopDownObservation):
         self.canvas_road_lines = WorldSurface(self.MAP_RESOLUTION, 0, pygame.Surface(self.MAP_RESOLUTION))
         self.canvas_runtime = WorldSurface(self.MAP_RESOLUTION, 0, pygame.Surface(self.MAP_RESOLUTION))
         self.canvas_ego = WorldSurface(self.MAP_RESOLUTION, 0, pygame.Surface(self.MAP_RESOLUTION))
-        self.canvas_past_pos = pygame.Surface(self.resolution)  # A local view
+        # past_pos channel intentionally disabled; keep the surface unused for now
+        self.canvas_past_pos = pygame.Surface(self.resolution)  # A local view (unused)
 
     def reset(self, env, vehicle=None):
         # self.engine = env.engine
@@ -189,7 +195,18 @@ class TopDownMultiChannel(TopDownObservation):
                             )
 
         self.canvas_road_network.blit(self.canvas_background, (0, 0))
-    # road_lines already has lane line drawings
+        # road_lines already has lane line drawings
+        # Normalize road_lines surface: set any non-black pixel to pure white so left/right boundaries have consistent brightness
+        try:
+            import pygame.surfarray as surfarray
+            arr = surfarray.pixels3d(self.canvas_road_lines)
+            # any non-black channel -> set to 255
+            mask = (arr.sum(axis=2) > 0)
+            arr[mask] = 255
+            del arr
+        except Exception:
+            # fallback: do nothing if surfarray is unavailable
+            pass
         # road_lines already contains only line drawings (we drew lines into canvas_road_lines directly)
         self.obs_window.reset(self.canvas_runtime)
         self._should_draw_map = False
@@ -203,19 +220,23 @@ class TopDownMultiChannel(TopDownObservation):
         assert len(self.engine.agents) == 1, "Don't support multi-agent top-down observation yet!"
         vehicle = self.engine.agents[DEFAULT_AGENT]
         pos = self.canvas_runtime.pos2pix(*vehicle.position)
-        print("Ego position (world coords):", vehicle.position, "-> (pix coords):", pos)
+        # print("Ego position (world coords):", vehicle.position, "-> (pix coords):", pos)
 
         clip_size = (int(self.obs_window.get_size()[0] * 1.1), int(self.obs_window.get_size()[0] * 1.1))
 
         # self._refresh(self.canvas_ego, pos, clip_size)
         self._refresh(self.canvas_runtime, pos, clip_size)
-        self.canvas_past_pos.fill(COLOR_BLACK)
+    # past_pos channel disabled (no per-step drawing)
+    # self.canvas_past_pos.fill(COLOR_BLACK)
         # self._draw_ego_vehicle()
 
         # Draw vehicles
         # TODO PZH: I hate computing these in pygame-related code!!!
         ego_heading = vehicle.heading_theta
         ego_heading = ego_heading if abs(ego_heading) > 2 * np.pi / 180 else 0
+
+        # current vehicle world position (used for ego marker drawing)
+        raw_pos = vehicle.position
 
         for v in self.engine.get_objects(lambda o: isinstance(o, BaseVehicle) or isinstance(o, BaseTrafficParticipant)
                                          ).values():
@@ -225,29 +246,16 @@ class TopDownMultiChannel(TopDownObservation):
             h = h if abs(h) > 2 * np.pi / 180 else 0
             ObjectGraphics.display(object=v, surface=self.canvas_runtime, heading=h, color=ObjectGraphics.BLUE)
 
-        raw_pos = vehicle.position
-        self.stack_past_pos.append(raw_pos)
-        for p_index in self._get_stack_indices(len(self.stack_past_pos)):
-            p_old = self.stack_past_pos[p_index]
-            diff = p_old - raw_pos
-            diff = (diff[0] * self.scaling, diff[1] * self.scaling)
-            # p = (p_old[0] - pos[0], p_old[1] - pos[1])
-            diff = (diff[1], diff[0])
-            p = pygame.math.Vector2(tuple(diff))
-            # p = pygame.math.Vector2(p)
-            p = p.rotate(np.rad2deg(ego_heading) + 90)
-            p = (p[1], p[0])
-            p = (
-                clip(p[0] + self.resolution[0] / 2, -self.resolution[0],
-                     self.resolution[0]), clip(p[1] + self.resolution[1] / 2, -self.resolution[1], self.resolution[1])
-            )
-            # p = self.canvas_background.pos2pix(p[0], p[1])
-            self.canvas_past_pos.fill((255, 255, 255), (p, (1, 1)))
+        # past_pos tracking/drawing disabled — we intentionally omit this channel
+        # raw_pos = vehicle.position
+        # self.stack_past_pos.append(raw_pos)
+        # (no drawing into self.canvas_past_pos)
 
         # default road_lines surface for this scene (may be replaced with a copy containing nav markers)
         road_lines_for_scene = self.canvas_road_lines
 
-        print("Navigation type:", type(self.target_vehicle.navigation))
+    # Debug print disabled: avoid noisy repeated logging during rendering
+    # print("Navigation type:", type(self.target_vehicle.navigation))
 
         if isinstance(self.target_vehicle.navigation, NodeNetworkNavigation):
             nav = self.target_vehicle.navigation
@@ -268,9 +276,9 @@ class TopDownMultiChannel(TopDownObservation):
                 lanes_id=1, ref_lane=ref_lane_next, ego_vehicle=self.target_vehicle
             )
 
-            print("[DEBUG] Current checkpoint (world coords):", cp_cur)
-            print("[DEBUG] Current checkpoint (world coords):", cp_cur)
-            print("[DEBUG] Next checkpoint (world coords):", cp_next)
+            # print("[DEBUG] Current checkpoint (world coords):", cp_cur)
+            # print("[DEBUG] Current checkpoint (world coords):", cp_cur)
+            # print("[DEBUG] Next checkpoint (world coords):", cp_next)
 
             # Also draw these two checkpoints into a temporary copy of the road_lines
             # so that the per-step observation contains navigation markers without
@@ -278,54 +286,236 @@ class TopDownMultiChannel(TopDownObservation):
             try:
                 road_lines_for_scene = self.canvas_road_lines.copy()
                 # draw current checkpoint (green) and next checkpoint (blue)
-                cur_world_pix = road_lines_for_scene.vec2pix([cp_cur[0], cp_cur[1]])
-                nxt_world_pix = road_lines_for_scene.vec2pix([cp_next[0], cp_next[1]])
+                # The navigation module returns the raw lane-end checkpoint coordinates (cp_cur, cp_next).
+                # NAVI_POINT_DIST clips the direction vector used for feature calculation but does not
+                # modify the returned checkpoint. For visualization we clip the displayed checkpoint so
+                # the BEV reflects NAVI_POINT_DIST changes.
+                def _clip_checkpoint_for_draw(cp):
+                    try:
+                        import numpy as _np
+                        ego_pos = _np.array(vehicle.position)
+                        cp_pos = _np.array([cp[0], cp[1]])
+                        dir_vec = cp_pos - ego_pos
+                        dist = float(_np.linalg.norm(dir_vec))
+                        max_dist = getattr(nav, "NAVI_POINT_DIST", getattr(nav, "NAVI_POINT_DIST", 50))
+                        if dist > max_dist and dist > 1e-6:
+                            dir_vec = dir_vec / dist * max_dist
+                        draw_pos = ego_pos + dir_vec
+                        return (float(draw_pos[0]), float(draw_pos[1]))
+                    except Exception:
+                        # fallback to original checkpoint if anything goes wrong
+                        return (float(cp[0]), float(cp[1]))
+
+                # Keep clipped positions for any internal nav computations, but
+                # use the raw checkpoint coordinates for visualization so the
+                # drawn points reflect the true navigation targets.
+                cp_cur_clip = _clip_checkpoint_for_draw(cp_cur)
+                cp_next_clip = _clip_checkpoint_for_draw(cp_next)
+
+                # Use raw (unclipped) checkpoint positions for drawing.
+                try:
+                    cp_cur_draw = (float(cp_cur[0]), float(cp_cur[1]))
+                except Exception:
+                    cp_cur_draw = (float(cp_cur_clip[0]), float(cp_cur_clip[1]))
+                try:
+                    cp_next_draw = (float(cp_next[0]), float(cp_next[1]))
+                except Exception:
+                    cp_next_draw = (float(cp_next_clip[0]), float(cp_next_clip[1]))
+
+                cur_world_pix = road_lines_for_scene.vec2pix([cp_cur_draw[0], cp_cur_draw[1]])
+                nxt_world_pix = road_lines_for_scene.vec2pix([cp_next_draw[0], cp_next_draw[1]])
                 # radius in pixels (make it more visible). Use a larger world radius
                 # (1.0m -> converted to pixels) and a larger minimum pixel size.
+                # Use a fixed pixel radius for checkpoint markers (smaller and consistent)
                 try:
-                    radius = max(4, road_lines_for_scene.pix(1.0))
+                    radius = 3
                 except Exception:
-                    radius = 4
-                # draw a black outline first to make the marker pop, then draw pure white inner circle
+                    radius = 3
+                # draw a halo (semi-transparent) underneath, then black outline and pure white inner circle
                 try:
                     outline = radius + 2
                 except Exception:
                     outline = radius + 2 if isinstance(radius, int) else 6
+
+                try:
+                    # Halo radius a bit larger than outline
+                    halo_radius = outline + 6
+
+                    # Helper to blit a semi-transparent halo using SRCALPHA surface and additive blending
+                    def _blit_halo(surface, center, halo_r, color=(255, 255, 255, 100)):
+                        size = int(halo_r * 2 + 4)
+                        halo_surf = pygame.Surface((size, size), pygame.SRCALPHA)
+                        c = (size // 2, size // 2)
+                        # Draw a filled semi-transparent circle as halo
+                        pygame.draw.circle(halo_surf, color, c, int(halo_r))
+                        # Use additive blend to make halo brighter where it overlaps other white
+                        surf_pos = (int(center[0] - c[0]), int(center[1] - c[1]))
+                        try:
+                            surface.blit(halo_surf, surf_pos, special_flags=pygame.BLEND_ADD)
+                        except Exception:
+                            # fallback regular blit if BLEND_ADD not supported
+                            surface.blit(halo_surf, surf_pos)
+
+                    # draw halo for current and next checkpoint
+                    _blit_halo(road_lines_for_scene, cur_world_pix, halo_radius, color=(255, 255, 255, 120))
+                    _blit_halo(road_lines_for_scene, nxt_world_pix, halo_radius, color=(255, 255, 255, 120))
+                except Exception:
+                    # if anything fails, continue to draw basic markers
+                    pass
+
+                # black outline then white inner circle (guaranteed fallback and crisp center)
                 pygame.draw.circle(road_lines_for_scene, (0, 0, 0), cur_world_pix, outline)
                 pygame.draw.circle(road_lines_for_scene, (255, 255, 255), cur_world_pix, radius)
                 pygame.draw.circle(road_lines_for_scene, (0, 0, 0), nxt_world_pix, outline)
                 pygame.draw.circle(road_lines_for_scene, (255, 255, 255), nxt_world_pix, radius)
+                # --- DEBUG: verify that vec2pix mapped pixels contain the drawn marker ---
+                try:
+                    if getattr(self, "debug_chk", False):
+                        try:
+                            import pygame.surfarray as surfarray
+                            arr = surfarray.array3d(road_lines_for_scene)  # shape: (w,h,3)
+
+                            def _is_nonblack_at(px, py, tol=8, radius=2):
+                                W, H = arr.shape[0], arr.shape[1]
+                                x0 = max(0, int(round(px)) - radius)
+                                x1 = min(W - 1, int(round(px)) + radius)
+                                y0 = max(0, int(round(py)) - radius)
+                                y1 = min(H - 1, int(round(py)) + radius)
+                                region = arr[x0:x1+1, y0:y1+1, :]
+                                return (region > tol).any()
+
+                            cur_ok = _is_nonblack_at(cur_world_pix[0], cur_world_pix[1], tol=8, radius=2)
+                            nxt_ok = _is_nonblack_at(nxt_world_pix[0], nxt_world_pix[1], tol=8, radius=2)
+                        except Exception:
+                            cur_ok = True
+                            nxt_ok = True
+
+                        if not (cur_ok and nxt_ok):
+                            # annotate and save debug image
+                            try:
+                                debug_surf = road_lines_for_scene.copy()
+                                cx, cy = int(round(cur_world_pix[0])), int(round(cur_world_pix[1]))
+                                nx, ny = int(round(nxt_world_pix[0])), int(round(nxt_world_pix[1]))
+                                pygame.draw.line(debug_surf, (255, 0, 0), (cx - 6, cy - 6), (cx + 6, cy + 6), 1)
+                                pygame.draw.line(debug_surf, (255, 0, 0), (cx - 6, cy + 6), (cx + 6, cy - 6), 1)
+                                pygame.draw.line(debug_surf, (255, 0, 255), (nx - 6, ny - 6), (nx + 6, ny + 6), 1)
+                                pygame.draw.line(debug_surf, (255, 0, 255), (nx - 6, ny + 6), (nx + 6, ny - 6), 1)
+                                import time, os
+                                debug_dir = os.path.join(os.getcwd(), "debug_bev")
+                                os.makedirs(debug_dir, exist_ok=True)
+                                fname = os.path.join(debug_dir, f"chk_debug_{int(time.time())}.png")
+                                try:
+                                    pygame.image.save(debug_surf, fname)
+                                except Exception:
+                                    pass
+                            except Exception:
+                                fname = None
+
+                            print("CHECKPOINT DEBUG: mismatch detected")
+                            print(" cur_world:", cp_cur_clip, "-> pix:", cur_world_pix, "present_on_surface:", cur_ok)
+                            print(" nxt_world:", cp_next_clip, "-> pix:", nxt_world_pix, "present_on_surface:", nxt_ok)
+                            if fname:
+                                print(" saved debug image at:", fname)
+                            # do not raise here; just report
+                except Exception:
+                    pass
             except Exception:
                 # fallback: don't break rendering if something unexpected happens
                 road_lines_for_scene = self.canvas_road_lines
 
         # Now render the observation windows using the possibly-updated road_lines surface
+        # Draw ego/world vehicle position onto the road_lines copy so it appears in channel 1
+        try:
+            # raw_pos is vehicle.position in world coords
+            ego_world_pix = road_lines_for_scene.vec2pix([raw_pos[0], raw_pos[1]])
+            ex = int(round(ego_world_pix[0]))
+            ey = int(round(ego_world_pix[1]))
+            # large marker with black border and white center for strong contrast
+            # Compute marker size from vehicle physical top-down dimensions (meters -> pixels)
+            try:
+                w_pix = max(3, int(round(vehicle.top_down_width * self.scaling)))
+                l_pix = max(3, int(round(vehicle.top_down_length * self.scaling)))
+                # choose the smaller vehicle dimension as marker size and clamp to [3, 7]
+                square_size = int(max(3, min(min(w_pix, l_pix), 7)))
+            except Exception:
+                # fallback fixed smaller marker
+                square_size = 5
+            half = square_size // 2
+            outer = (ex - half, ey - half, square_size, square_size)
+            inner = (ex - half + 1, ey - half + 1, max(1, square_size - 2), max(1, square_size - 2))
+            try:
+                # draw black outer square then white inner square
+                pygame.draw.rect(road_lines_for_scene, (0, 0, 0), outer)
+                pygame.draw.rect(road_lines_for_scene, (255, 255, 255), inner)
+            except Exception:
+                # fallback: single white pixel
+                road_lines_for_scene.fill((255, 255, 255), ((ex, ey), (1, 1)))
+            # Also draw a circular halo marker to make ego position more visible
+            try:
+                halo_r = max(4, square_size // 3)
+                # black border then larger white inner circle on the per-scene road_lines
+                pygame.draw.circle(road_lines_for_scene, (0, 0, 0), (ex, ey), halo_r + 2)
+                pygame.draw.circle(road_lines_for_scene, (255, 255, 255), (ex, ey), halo_r + 1)
+                # Add an additive semi-transparent white halo to make the marker visually brighter
+                try:
+                    size = int((halo_r + 4) * 2)
+                    halo_surf = pygame.Surface((size, size), pygame.SRCALPHA)
+                    c = (size // 2, size // 2)
+                    pygame.draw.circle(halo_surf, (255, 255, 255, 140), c, halo_r + 2)
+                    surf_pos = (int(ex - c[0]), int(ey - c[1]))
+                    try:
+                        road_lines_for_scene.blit(halo_surf, surf_pos, special_flags=pygame.BLEND_ADD)
+                    except Exception:
+                        road_lines_for_scene.blit(halo_surf, surf_pos)
+                except Exception:
+                    pass
+            except Exception:
+                pass
+            # also draw the same marker onto global road_network to help visibility in full-map views
+            try:
+                global_pix = self.canvas_road_network.vec2pix([raw_pos[0], raw_pos[1]])
+                gx, gy = int(round(global_pix[0])), int(round(global_pix[1]))
+                gouter = (gx - half, gy - half, square_size, square_size)
+                ginner = (gx - half + 1, gy - half + 1, max(1, square_size - 2), max(1, square_size - 2))
+                pygame.draw.rect(self.canvas_road_network, (0, 0, 0), gouter)
+                pygame.draw.rect(self.canvas_road_network, (255, 255, 255), ginner)
+                try:
+                    # also draw circular halo on the global canvas (match per-scene brighter style)
+                    pygame.draw.circle(self.canvas_road_network, (0, 0, 0), (gx, gy), halo_r + 2)
+                    pygame.draw.circle(self.canvas_road_network, (255, 255, 255), (gx, gy), halo_r + 1)
+                    try:
+                        size = int((halo_r + 4) * 2)
+                        halo_surf_g = pygame.Surface((size, size), pygame.SRCALPHA)
+                        c_g = (size // 2, size // 2)
+                        pygame.draw.circle(halo_surf_g, (255, 255, 255, 140), c_g, halo_r + 2)
+                        surf_pos_g = (int(gx - c_g[0]), int(gy - c_g[1]))
+                        try:
+                            self.canvas_road_network.blit(halo_surf_g, surf_pos_g, special_flags=pygame.BLEND_ADD)
+                        except Exception:
+                            self.canvas_road_network.blit(halo_surf_g, surf_pos_g)
+                    except Exception:
+                        pass
+                except Exception:
+                    pass
+            except Exception:
+                pass
+        except Exception:
+            pass
+
+        # Render only the two persistent canvases we keep in the BEV
         ret = self.obs_window.render(
             canvas_dict=dict(
                 road_network=self.canvas_road_network,
                 road_lines=road_lines_for_scene,
-                traffic_flow=self.canvas_runtime,
-                target_vehicle=self.canvas_ego,
-                # navigation=self.canvas_navigation,
             ),
             position=pos,
             heading=vehicle.heading_theta
         )
-        ret["past_pos"] = self.canvas_past_pos
         return ret
-        vehicle = self.engine.agents[DEFAULT_AGENT]
-        w = vehicle.top_down_width * self.scaling
-        h = vehicle.top_down_length * self.scaling
-        position = (self.resolution[0] / 2, self.resolution[1] / 2)
-        angle = 90
-        box = [pygame.math.Vector2(p) for p in [(-h / 2, -w / 2), (-h / 2, w / 2), (h / 2, w / 2), (h / 2, -w / 2)]]
-        box_rotate = [p.rotate(angle) + position for p in box]
-        pygame.draw.polygon(self.canvas_past_pos, color=(128, 128, 128), points=box_rotate)
 
     def get_observation_window(self):
-        ret = self.obs_window.get_observation_window()
-        ret["past_pos"] = self.canvas_past_pos
-        return ret
+        # Return whatever the observation window provides for configured channels
+        return self.obs_window.get_observation_window()
 
     def _transform(self, img):
         # img = np.mean(img, axis=-1)
@@ -362,15 +552,12 @@ class TopDownMultiChannel(TopDownObservation):
         #     self._should_fill_stack = False
         # self.stack_traffic_flow.append(img_dict["traffic_flow"])
 
+        # Build BEV image channels without traffic_flow
         img = [
             img_dict["road_network"] * 2,
             # new channel: road_lines (only lines, no drivable area fill)
             img_dict.get("road_lines", np.zeros_like(img_dict["road_network"])),
-            # img_navigation,
-            # img_dict["navigation"],
-            # img_dict["target_vehicle"],
-            img_dict["past_pos"],
-        ]  # + list(self.stack_traffic_flow)
+        ]  # past_pos and traffic_flow omitted intentionally
 
         # Stacked traffic flow
         # stacked = np.zeros_like(img_navigation)

@@ -51,7 +51,7 @@ if __name__ == '__main__':
 
     # create environment on straight SSS map and disable rendering to speed up
     config = dict(
-        map="SSS",
+        map="OO",
         num_scenarios=1,
         start_seed=0,
         use_render=False,

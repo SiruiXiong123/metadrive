@@ -48,6 +48,15 @@ class TopDownObservation(BaseObservation):
         self._canvas_to_display_scaling = 0.0
         self.max_distance = max_distance
 
+    # Camera control overrides ------------------------------------------------
+    # If set, self.camera_world_pos is used as the camera center in world coords (x,y)
+    # If None and self.camera_offset is set, camera follows ego position + offset (dx,dy)
+    # If both are None, default behaviour (follow ego precisely) is used.
+    # If self.center_on_map is True, override to center on map bounding box.
+        self.camera_world_pos = None
+        self.camera_offset = None
+        self.center_on_map = False
+
         # scene
         self.road_network = None
         # self.engine = None
@@ -149,7 +158,20 @@ class TopDownObservation(BaseObservation):
         # Set the active area that can be modify to accelerate
         assert len(self.engine.agents) == 1, "Don't support multi-agent top-down observation yet!"
         vehicle = self.engine.agents[DEFAULT_AGENT]
-        pos = self.canvas_runtime.pos2pix(*vehicle.position)
+        # Determine camera world position according to overrides:
+        if self.camera_world_pos is not None:
+            camera_world = tuple(self.camera_world_pos)
+        elif getattr(self, "center_on_map", False):
+            # center on map bounding box if requested
+            b_box = self.road_network.get_bounding_box()
+            camera_world = ((b_box[0] + b_box[1]) / 2, (b_box[2] + b_box[3]) / 2)
+        elif self.camera_offset is not None:
+            # offset is relative to ego (dx, dy) in world coords
+            camera_world = (vehicle.position[0] + self.camera_offset[0], vehicle.position[1] + self.camera_offset[1])
+        else:
+            camera_world = tuple(vehicle.position)
+
+        pos = self.canvas_runtime.pos2pix(*camera_world)
         clip_size = (int(self.obs_window.get_size()[0] * 1.1), int(self.obs_window.get_size()[0] * 1.1))
         self.canvas_runtime.set_clip((pos[0] - clip_size[0] / 2, pos[1] - clip_size[1] / 2, clip_size[0], clip_size[1]))
         self.canvas_runtime.fill(COLOR_BLACK)
@@ -170,7 +192,7 @@ class TopDownObservation(BaseObservation):
             h = h if abs(h) > 2 * np.pi / 180 else 0
             ObjectGraphics.display(object=v, surface=self.canvas_runtime, heading=h, color=ObjectGraphics.BLUE)
 
-        # Prepare a runtime canvas for rotation
+        # Prepare a runtime canvas for rotation. Heading still follows ego heading by default.
         return self.obs_window.render(canvas=self.canvas_runtime, position=pos, heading=vehicle.heading_theta)
 
     @staticmethod
@@ -233,3 +255,16 @@ class TopDownObservation(BaseObservation):
         # scene
         self.road_network = None
         super(TopDownObservation, self).destroy()
+
+    # ----------------------- Camera control API ------------------------------
+    def set_camera_world_pos(self, world_pos):
+        """Set camera to a fixed world coordinate (x, y). Pass None to disable."""
+        self.camera_world_pos = None if world_pos is None else (float(world_pos[0]), float(world_pos[1]))
+
+    def set_camera_offset(self, offset):
+        """Set camera offset relative to ego (dx, dy) in world coords. Pass None to disable."""
+        self.camera_offset = None if offset is None else (float(offset[0]), float(offset[1]))
+
+    def enable_center_on_map(self, enable: bool):
+        """If enabled, camera centers on map bounding box instead of following ego."""
+        self.center_on_map = bool(enable)

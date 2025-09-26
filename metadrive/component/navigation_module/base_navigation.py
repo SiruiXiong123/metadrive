@@ -17,8 +17,8 @@ class BaseNavigation:
     """
     NUM_WAY_POINT = 2
     CHECK_POINT_INFO_DIM = 5
-    NAVI_POINT_DIST = 50
-    PRE_NOTIFY_DIST = 40
+    NAVI_POINT_DIST = 10
+    PRE_NOTIFY_DIST = 30
     MIN_ALPHA = 0.15
     CKPT_UPDATE_RANGE = 5
     FORCE_CALCULATE = False

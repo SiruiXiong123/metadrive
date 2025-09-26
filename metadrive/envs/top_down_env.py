@@ -15,7 +15,7 @@ class TopDownSingleFrameMetaDriveEnv(MetaDriveEnv):
                 "frame_stack": 3, #3
                 "post_stack": 1, #5
                 "norm_pixel": True,
-                "resolution_size": 84,
+                "resolution_size": 100,
                 "distance": 30
             }
         )
@@ -55,7 +55,7 @@ class TopDownMetaDriveEnvV2(MetaDriveEnv):
                 "frame_stack": 3,
                 "post_stack": 5,
                 "norm_pixel": True,
-                "resolution_size": 84,
+                "resolution_size": 100,
                 "distance": 30
             }
         )

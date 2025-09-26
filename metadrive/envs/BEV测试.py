@@ -32,6 +32,7 @@ if __name__ == '__main__':
         random_lane_width=True,
         use_render=True,
         traffic_density=0.0,
+        resolution_size=192,
         #traffic_mode="hybrid",
     )
 
@@ -42,7 +43,7 @@ if __name__ == '__main__':
 
     env = create_env_for_testing()
     #PPO_Path = r"C:\Users\37945\OneDrive\Desktop\ppo_topdown_bev.zip"
-    PPO_Path = r"C:\Users\37945\OneDrive\Desktop\metadrive\metadrive\ppo_topdown_bev_logs_branch\ppo_topdown_bev.zip"
+    PPO_Path = r"C:\Users\37945\OneDrive\Desktop\dingding\ppo_topdown_bev_final_ckpt.zip"
 
 
     model = PPO.load(PPO_Path, env=env)

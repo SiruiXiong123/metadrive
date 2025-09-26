@@ -76,8 +76,8 @@ def get_bev_hwc(obs):
 def show_bev_multi(bev_hwc):
     """显示多通道 BEV 图像（不保存）"""
     channel_names = [
-    "Road network",
-    "road lines",
+    "Road Network",
+    "Road Lines",
     "past_pos",
     ]   
 
@@ -95,9 +95,12 @@ def show_bev_multi(bev_hwc):
 
 if __name__ == "__main__":
     env = TopDownMetaDrive(dict(
+        map="OO",
         num_scenarios=1,
         # use_render=True,
         start_seed=123,
+        distance=48,
+        resolution_size=192,
 
     ))
     try:

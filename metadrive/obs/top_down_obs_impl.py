@@ -459,7 +459,10 @@ class LaneGraphics:
 
 
 class ObservationWindowMultiChannel:
-    CHANNEL_NAMES = ["road_network", "road_lines", "traffic_flow", "target_vehicle", "past_pos"]
+    # Original channel order included traffic_flow as a separate visual channel.
+    # We comment out the traffic_flow channel here so it is not shown in the multi-channel preview.
+    # CHANNEL_NAMES = ["road_network", "road_lines", "traffic_flow", "target_vehicle", "past_pos"]
+    CHANNEL_NAMES = ["road_network", "road_lines", "target_vehicle", "past_pos"]
 
     def __init__(self, names, max_range, resolution):
         assert isinstance(names, list)
@@ -527,8 +530,9 @@ class ObservationWindowMultiChannel:
             _draw(canvas, "road_network", pygame.Color("White"))
         if "road_lines" in ret:
             _draw(canvas, "road_lines", pygame.Color("White"))
-        if "traffic_flow" in ret:
-            _draw(canvas, "traffic_flow", pygame.Color("Red"))
+        # Do not draw traffic_flow in the preview panel by default (commented out)
+        # if "traffic_flow" in ret:
+        #     _draw(canvas, "traffic_flow", pygame.Color("Red"))
         if "target_vehicle" in ret:
             _draw(canvas, "target_vehicle", pygame.Color("Green"))
         return canvas
