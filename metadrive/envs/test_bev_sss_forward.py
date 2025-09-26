@@ -27,10 +27,10 @@ def get_bev_hwc(obs):
 def save_bev_multi_frame(bev_hwc, save_path):
     # save a simple figure with each channel shown in a column
     channel_names = [
-        "Road network",
-        "road lines",
-        "past_pos",
-    ]
+    "Road Network",
+    "Checkpoints",
+    "Ego Position",
+    ]   
     C = bev_hwc.shape[-1]
     titles = channel_names[:C] + [f"Channel {i}" for i in range(len(channel_names), C)]
     plt.figure(figsize=(3 * C, 3), dpi=120)

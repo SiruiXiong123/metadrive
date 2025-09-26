@@ -77,8 +77,8 @@ def show_bev_multi(bev_hwc):
     """显示多通道 BEV 图像（不保存）"""
     channel_names = [
     "Road Network",
-    "Road Lines",
-    "past_pos",
+    "Checkpoints",
+    "Ego Position",
     ]   
 
     C = bev_hwc.shape[-1]
@@ -101,7 +101,6 @@ if __name__ == "__main__":
         start_seed=123,
         distance=48,
         resolution_size=192,
-
     ))
     try:
         obs, _ = env.reset()
