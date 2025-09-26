@@ -266,6 +266,27 @@ class TopDownMultiChannel(TopDownObservation):
                     pts_world = nav.discretize_reference_trajectory()
                 except Exception:
                     pts_world = None
+            elif isinstance(nav, NodeNetworkNavigation) or isinstance(nav, EdgeNetworkNavigation):
+                # fallback: sample lane centerlines between checkpoints
+                pts_world = []
+                try:
+                    cps = getattr(nav, 'checkpoints', None)
+                    if cps is not None and len(cps) >= 2:
+                        for a, b in zip(cps[:-1], cps[1:]):
+                            try:
+                                lanes = self.road_network.graph[a][b]
+                                if len(lanes) == 0:
+                                    continue
+                                lane = lanes[len(lanes) // 2]
+                                for s in np.linspace(0.0, lane.length, num=40):
+                                    p = lane.position(s, 0.0)
+                                    pts_world.append((float(p[0]), float(p[1])))
+                            except Exception:
+                                continue
+                    else:
+                        pts_world = None
+                except Exception:
+                    pts_world = None
 
                 if getattr(self, "debug_chk", False):
                     try:
