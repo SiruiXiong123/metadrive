@@ -92,16 +92,28 @@ def show_bev_multi(bev_hwc):
     plt.suptitle("Multi-channels Top-down Observation")
     plt.show()
 
+cfg = {
+    "map": "OO",
+    # "num_scenarios": 500,
+    # "start_seed": 123,
+    "random_lane_width": True,
+    "random_lane_num": False,
+    "use_render": False,
+    "traffic_density": 0.0,
+    "traffic_mode": "hybrid",
+    "manual_control": False,
+    "controller": "keyboard",
+    "vehicle_config": {
+        "show_navi_mark": True,
+        "show_line_to_dest": False,
+        "show_line_to_navi_mark": True,
+    },
+    "distance": 20,
+    "resolution_size": 120,
+}
 
 if __name__ == "__main__":
-    env = TopDownMetaDrive(dict(
-        map="OO",
-        num_scenarios=1,
-        # use_render=True,
-        start_seed=123,
-        distance=20,
-        resolution_size=120,
-    ))
+    env = TopDownMetaDrive(cfg)
     
     try:
         obs, _ = env.reset()

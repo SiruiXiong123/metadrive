@@ -257,113 +257,10 @@ class TopDownMultiChannel(TopDownObservation):
     # Debug print disabled: avoid noisy repeated logging during rendering
     # print("Navigation type:", type(self.target_vehicle.navigation))
 
-        # Try to draw discretized trajectory into per-scene copy when available
-        try:
-            nav = self.target_vehicle.navigation
-            if isinstance(nav, TrajectoryNavigation):
-                pts_world = None
-                try:
-                    pts_world = nav.discretize_reference_trajectory()
-                except Exception:
-                    pts_world = None
-            elif isinstance(nav, NodeNetworkNavigation) or isinstance(nav, EdgeNetworkNavigation):
-                # fallback: sample lane centerlines between checkpoints
-                pts_world = []
-                try:
-                    cps = getattr(nav, 'checkpoints', None)
-                    if cps is not None and len(cps) >= 2:
-                        for a, b in zip(cps[:-1], cps[1:]):
-                            try:
-                                lanes = self.road_network.graph[a][b]
-                                if len(lanes) == 0:
-                                    continue
-                                lane = lanes[len(lanes) // 2]
-                                for s in np.linspace(0.0, lane.length, num=40):
-                                    p = lane.position(s, 0.0)
-                                    pts_world.append((float(p[0]), float(p[1])))
-                            except Exception:
-                                continue
-                    else:
-                        pts_world = None
-                except Exception:
-                    pts_world = None
-
-                if getattr(self, "debug_chk", False):
-                    try:
-                        nav_type = type(nav).__name__ if nav is not None else "None"
-                        if pts_world is None:
-                            print(f"DEBUG: nav type={nav_type}, discretize_reference_trajectory returned None")
-                        else:
-                            print(f"DEBUG: nav type={nav_type}, sampled pts_count={len(pts_world)}, first3={pts_world[:3]}")
-                    except Exception:
-                        pass
-
-                if pts_world and len(pts_world) >= 2:
-                    # draw on a per-scene copy to avoid mutating persistent canvas
-                    road_lines_for_scene = self.canvas_road_lines.copy()
-                    try:
-                        # convert to pixel coordinates
-                        pix_pts = [road_lines_for_scene.vec2pix([float(p[0]), float(p[1])]) for p in pts_world]
-                        import math as _math
-                        # make the trajectory very visible: wide dark outline + bright colored core
-                        width_outline = max(4, int(_math.ceil(8)))
-                        width_core = max(2, int(_math.ceil(4)))
-
-                        # draw heavy outline first
-                        try:
-                            pygame.draw.lines(road_lines_for_scene, (0, 0, 0), False, pix_pts, width_outline)
-                        except Exception:
-                            pass
-                        # draw colored core (blue-ish) on top
-                        try:
-                            pygame.draw.lines(road_lines_for_scene, (50, 150, 255), False, pix_pts, width_core)
-                        except Exception:
-                            pass
-
-                        # draw end caps (start and goal) as filled circles to make them obvious
-                        try:
-                            sx, sy = int(round(pix_pts[0][0])), int(round(pix_pts[0][1]))
-                            ex, ey = int(round(pix_pts[-1][0])), int(round(pix_pts[-1][1]))
-                            pygame.draw.circle(road_lines_for_scene, (0, 0, 0), (sx, sy), width_outline + 2)
-                            pygame.draw.circle(road_lines_for_scene, (255, 255, 255), (sx, sy), width_core)
-                            pygame.draw.circle(road_lines_for_scene, (0, 0, 0), (ex, ey), width_outline + 2)
-                            pygame.draw.circle(road_lines_for_scene, (255, 255, 255), (ex, ey), width_core)
-                        except Exception:
-                            pass
-
-                        # optional additive halo for extra pop (best-effort)
-                        try:
-                            halo_alpha = 120
-                            halo_r = width_outline * 2
-                            halo_surf = pygame.Surface((halo_r * 2 + 4, halo_r * 2 + 4), pygame.SRCALPHA)
-                            c = (halo_r + 2, halo_r + 2)
-                            pygame.draw.circle(halo_surf, (100, 180, 255, halo_alpha), c, halo_r)
-                            # blit halo at several sample points to enhance visibility
-                            for i, (px, py) in enumerate(pix_pts[:: max(1, len(pix_pts)//10)]):
-                                try:
-                                    road_lines_for_scene.blit(halo_surf, (int(px) - c[0], int(py) - c[1]), special_flags=pygame.BLEND_ADD)
-                                except Exception:
-                                    try:
-                                        road_lines_for_scene.blit(halo_surf, (int(px) - c[0], int(py) - c[1]))
-                                    except Exception:
-                                        pass
-                        except Exception:
-                            pass
-                    except Exception:
-                        road_lines_for_scene = self.canvas_road_lines
-                else:
-                    road_lines_for_scene = self.canvas_road_lines
-            else:
-                # not a TrajectoryNavigation; keep base road_lines
-                if getattr(self, "debug_chk", False):
-                    try:
-                        print(f"DEBUG: navigation backend is {type(nav).__name__}, not TrajectoryNavigation")
-                    except Exception:
-                        pass
-                road_lines_for_scene = self.canvas_road_lines
-        except Exception:
-            # on any unexpected issue fallback to persistent canvas
-            road_lines_for_scene = self.canvas_road_lines
+        # Navigation visualization into channel2 has been intentionally disabled.
+        # Keep road_lines_for_scene as the persistent canvas that only contains lane
+        # center/line drawings (no navigation checkpoints or connecting lines).
+        road_lines_for_scene = self.canvas_road_lines
 
         # Now render the observation windows using the possibly-updated road_lines surface
         # Draw ego/world vehicle position onto the road_lines copy so it appears in channel 1
@@ -413,34 +310,9 @@ class TopDownMultiChannel(TopDownObservation):
                     pass
             except Exception:
                 pass
-            # also draw the same marker onto global road_network to help visibility in full-map views
-            try:
-                global_pix = self.canvas_road_network.vec2pix([raw_pos[0], raw_pos[1]])
-                gx, gy = int(round(global_pix[0])), int(round(global_pix[1]))
-                gouter = (gx - half, gy - half, square_size, square_size)
-                ginner = (gx - half + 1, gy - half + 1, max(1, square_size - 2), max(1, square_size - 2))
-                pygame.draw.rect(self.canvas_road_network, (0, 0, 0), gouter)
-                pygame.draw.rect(self.canvas_road_network, (255, 255, 255), ginner)
-                try:
-                    # also draw circular halo on the global canvas (match per-scene brighter style)
-                    pygame.draw.circle(self.canvas_road_network, (0, 0, 0), (gx, gy), halo_r + 2)
-                    pygame.draw.circle(self.canvas_road_network, (255, 255, 255), (gx, gy), halo_r + 1)
-                    try:
-                        size = int((halo_r + 4) * 2)
-                        halo_surf_g = pygame.Surface((size, size), pygame.SRCALPHA)
-                        c_g = (size // 2, size // 2)
-                        pygame.draw.circle(halo_surf_g, (255, 255, 255, 140), c_g, halo_r + 2)
-                        surf_pos_g = (int(gx - c_g[0]), int(gy - c_g[1]))
-                        try:
-                            self.canvas_road_network.blit(halo_surf_g, surf_pos_g, special_flags=pygame.BLEND_ADD)
-                        except Exception:
-                            self.canvas_road_network.blit(halo_surf_g, surf_pos_g)
-                    except Exception:
-                        pass
-                except Exception:
-                    pass
-            except Exception:
-                pass
+            # Intentionally do NOT draw ego marker onto the global road_network canvas.
+            # This keeps channel 1 (road_network) free of ego-position markers.
+            pass
         except Exception:
             pass
 

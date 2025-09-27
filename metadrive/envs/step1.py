@@ -16,18 +16,23 @@ stack_size = 3
 base_path = r'C:\Users\37945\OneDrive\Desktop'
 
 # 配置环境参数
-cfg = dict(
-    num_scenarios=1,
-    start_seed=0,
-    random_lane_width=True,
-    random_lane_num=False,
-    use_render=False,  # 关闭窗口渲染，防止报错
-    traffic_density=0.0,
-    image_observation=True,
-    vehicle_config=dict(image_source="rgb_camera"),
-    sensors={"rgb_camera": (RGBCamera, *sensor_size)},
-    stack_size=stack_size,
-)
+cfg = {
+    "map": "OO",
+    # "num_scenarios": 500,
+    # "start_seed": 123,
+    "random_lane_width": True,
+    "random_lane_num": False,
+    "use_render": True,
+    "traffic_density": 0.0,
+    "traffic_mode": "hybrid",
+    "manual_control": True,
+    "controller": "keyboard",
+    "vehicle_config": {
+        "show_navi_mark": True,
+        "show_line_to_dest": False,
+        "show_line_to_navi_mark": True,
+    },
+}
 
 # 创建 DummyVecEnv 包裹的单环境
 def create_env_for_testing():
@@ -38,24 +43,60 @@ def create_env_for_testing():
 if __name__ == '__main__':
     env = create_env_for_testing()
 
-    # 加载 SAC 模型
-    SAC_Path = os.path.join(base_path, 'sac_metadrive.zip')
-    model = SAC.load(SAC_Path, env=env, deterministic=True)
 
     # 获取一帧观测
-    obs = env.reset()
-    action, _ = model.predict(obs, deterministic=True)
-    print("🚗 Predicted action:", action)
+    reset_ret = env.reset()
+    # support both (obs, info) and obs returns from env.reset()
+    if isinstance(reset_ret, tuple) and len(reset_ret) >= 1:
+        obs = reset_ret[0]
+    else:
+        obs = reset_ret
 
-    # ✅ 修复：正确提取图像（取第一个环境，最后一帧）
-    img = obs["image"][0][:, :, :, -1]  # shape (H, W, C) or (C, H, W)
-    if img.shape[0] == 3:  # channel-first 需要转置
-        img = np.transpose(img, (1, 2, 0))
+    # 尝试从 obs 中找到 image 数组（兼容 dict、vec env）
+    img_arr = None
+    if isinstance(obs, dict):
+        if "image" in obs:
+            img_arr = obs["image"]
+        else:
+            vals = [v for v in obs.values() if isinstance(v, np.ndarray)]
+            img_arr = vals[0] if vals else None
+    elif isinstance(obs, np.ndarray):
+        img_arr = obs
+    else:
+        raise RuntimeError("Unsupported observation type: %r" % type(obs))
 
-    # # ✅ 显示图像
-    # plt.imshow(img)
-    # plt.title("RGB Camera Last Frame")
-    # plt.axis('off')
-    # plt.show()
+    if img_arr is None:
+        raise RuntimeError("No image found in observation")
+
+    # 如果是 vectorized env，通常第一维是环境 batch 大小（1）
+    if isinstance(img_arr, np.ndarray) and img_arr.ndim == 4 and img_arr.shape[0] == 1:
+        img_arr = img_arr[0]
+
+    # 如果还有 4 维（可能是 time x H x W x C 或 batch x H x W x C），尝试取最后一帧
+    if isinstance(img_arr, np.ndarray) and img_arr.ndim == 4:
+        # 假设最后一维是 channel，如果是 (T,H,W,C) 则取最后一帧
+        if img_arr.shape[-1] in (1, 3, 4):
+            img_arr = img_arr[-1]
+        else:
+            # 其他罕见布局：尝试压缩第一个轴
+            img_arr = img_arr[0]
+
+    # 此时 img_arr 应为 2D (H,W) 或 3D (H,W,C) 或 (C,H,W)
+    if img_arr.ndim == 2:
+        img = img_arr
+    elif img_arr.ndim == 3:
+        # 如果是 channel-first (C,H,W)，把它转成 (H,W,C)
+        if img_arr.shape[0] in (1, 3, 4) and img_arr.shape[-1] not in (1, 3, 4):
+            img = np.transpose(img_arr, (1, 2, 0))
+        else:
+            img = img_arr
+    else:
+        raise RuntimeError(f"Unexpected image array shape: {img_arr.shape}")
+
+    # 显示图像
+    plt.imshow(img)
+    plt.title("RGB Camera Last Frame")
+    plt.axis('off')
+    plt.show()
 
     env.close()

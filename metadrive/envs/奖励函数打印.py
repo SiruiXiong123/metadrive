@@ -16,19 +16,23 @@ from win32ui import ID_FILE_LOCATE
 from stable_baselines3.common.noise import NormalActionNoise, OrnsteinUhlenbeckActionNoise
 
 
-
-cfg=dict(
-        map="OOOO",
-        # num_scenarios=500,
-        # start_seed=123,
-        random_lane_width=True,
-        random_lane_num=False,
-        use_render=True,
-        traffic_density=0.0,
-        traffic_mode="hybrid",
-        manual_control=True,
-        controller="keyboard"
-    )
+cfg = {
+    "map": "OO",
+    # "num_scenarios": 500,
+    # "start_seed": 123,
+    "random_lane_width": True,
+    "random_lane_num": False,
+    "use_render": True,
+    "traffic_density": 0.0,
+    "traffic_mode": "hybrid",
+    "manual_control": True,
+    "controller": "keyboard",
+    "vehicle_config": {
+        "show_navi_mark": True,
+        "show_line_to_dest": False,
+        "show_line_to_navi_mark": True,
+    },
+}
 
 env=MetaDriveEnv(cfg)
 
