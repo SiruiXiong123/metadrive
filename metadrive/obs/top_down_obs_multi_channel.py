@@ -251,16 +251,80 @@ class TopDownMultiChannel(TopDownObservation):
         # self.stack_past_pos.append(raw_pos)
         # (no drawing into self.canvas_past_pos)
 
-        # default road_lines surface for this scene (may be replaced with a copy containing nav markers)
-        road_lines_for_scene = self.canvas_road_lines
+        # default road_lines surface for this scene (we'll use a copy so per-frame
+        # markers (ego, nav) don't permanently modify the persistent canvas)
+        try:
+            road_lines_for_scene = self.canvas_road_lines.copy()
+        except Exception:
+            # fallback to reference if copy() unavailable
+            road_lines_for_scene = self.canvas_road_lines
 
     # Debug print disabled: avoid noisy repeated logging during rendering
     # print("Navigation type:", type(self.target_vehicle.navigation))
 
-        # Navigation visualization into channel2 has been intentionally disabled.
-        # Keep road_lines_for_scene as the persistent canvas that only contains lane
-        # center/line drawings (no navigation checkpoints or connecting lines).
-        road_lines_for_scene = self.canvas_road_lines
+        # Navigation visualization into channel2 is drawn onto a per-frame copy
+        # (road_lines_for_scene). This avoids permanently modifying
+        # self.canvas_road_lines and thus prevents residual/ghosted agent paths.
+
+        # Draw navigation markers and lines onto the road_lines channel when enabled.
+        # This uses vehicle.navigation.get_checkpoints() (preferred) or falls back to
+        # navigation.checkpoints if needed. It respects vehicle config flags
+        # show_navi_mark and show_line_to_navi_mark.
+        try:
+            nav = self.target_vehicle.navigation
+            cfg = getattr(self.target_vehicle, "config", {}) or {}
+            show_ckpt = cfg.get("show_navi_mark", False)
+            show_line = cfg.get("show_line_to_navi_mark", False)
+
+            ckpt1 = ckpt2 = None
+            try:
+                # prefer API that returns world coordinates
+                ckpt1, ckpt2 = nav.get_checkpoints()
+            except Exception:
+                # fallback: if checkpoints is a list of world coords (trajectory), try that
+                try:
+                    if hasattr(nav, "checkpoints") and len(nav.checkpoints) > 0 and isinstance(nav.checkpoints[0], (list, tuple, np.ndarray)):
+                        ckpt1 = nav.checkpoints[0]
+                        ckpt2 = nav.checkpoints[1] if len(nav.checkpoints) > 1 else nav.checkpoints[-1]
+                except Exception:
+                    ckpt1 = ckpt2 = None
+
+            def world_to_pix(surface, world_pos):
+                p = surface.vec2pix([world_pos[0], world_pos[1]])
+                return int(round(p[0])), int(round(p[1]))
+
+            # draw checkpoint markers (small filled circles)
+            if show_ckpt and ckpt1 is not None:
+                try:
+                    r = max(2, int(round(self.canvas_road_lines.pix(0.5))))
+                except Exception:
+                    r = 3
+                try:
+                    x1, y1 = world_to_pix(road_lines_for_scene, ckpt1)
+                    pygame.draw.circle(road_lines_for_scene, (255, 0, 0), (x1, y1), r)
+                except Exception:
+                    pass
+                try:
+                    if ckpt2 is not None:
+                        x2, y2 = world_to_pix(road_lines_for_scene, ckpt2)
+                        pygame.draw.circle(road_lines_for_scene, (200, 120, 0), (x2, y2), max(2, r - 1))
+                except Exception:
+                    pass
+
+            # draw line(s) from ego to first checkpoint and optionally to the next checkpoint
+            if show_line and ckpt1 is not None:
+                try:
+                    ego_pix = world_to_pix(road_lines_for_scene, self.target_vehicle.position)
+                    ck1_pix = world_to_pix(road_lines_for_scene, ckpt1)
+                    pygame.draw.line(road_lines_for_scene, (255, 200, 0), ego_pix, ck1_pix, max(1, int(round(self.canvas_road_lines.pix(0.2)))))
+                    if ckpt2 is not None:
+                        ck2_pix = world_to_pix(road_lines_for_scene, ckpt2)
+                        pygame.draw.line(road_lines_for_scene, (255, 200, 0), ck1_pix, ck2_pix, max(1, int(round(self.canvas_road_lines.pix(0.15)))))
+                except Exception:
+                    pass
+        except Exception:
+            # navigation not present or not ready; skip gracefully
+            pass
 
         # Now render the observation windows using the possibly-updated road_lines surface
         # Draw ego/world vehicle position onto the road_lines copy so it appears in channel 1
