@@ -359,45 +359,27 @@ class TopDownMultiChannel(TopDownObservation):
         # Now render the observation windows using the possibly-updated road_lines surface
         # Draw ego/world vehicle position onto the road_lines copy so it appears in channel 1
         try:
-            # raw_pos is vehicle.position in world coords
-            ego_world_pix = road_lines_for_scene.vec2pix([raw_pos[0], raw_pos[1]])
-            ex = int(round(ego_world_pix[0]))
-            ey = int(round(ego_world_pix[1]))
-            # large marker with black border and white center for strong contrast
-            # Compute marker size from vehicle physical top-down dimensions (meters -> pixels)
-            try:
-                w_pix = max(3, int(round(vehicle.top_down_width * self.scaling)))
-                l_pix = max(3, int(round(vehicle.top_down_length * self.scaling)))
-                # choose the smaller vehicle dimension as marker size and clamp to [3, 7]
-                square_size = int(max(3, min(min(w_pix, l_pix), 7)))
-            except Exception:
-                # fallback fixed smaller marker
-                square_size = 5
-            half = square_size // 2
-            outer = (ex - half, ey - half, square_size, square_size)
-            inner = (ex - half + 1, ey - half + 1, max(1, square_size - 2), max(1, square_size - 2))
-            try:
-                # draw a filled green rectangle scaled to vehicle top-down dimensions
-                # Compute pixel width/length (meters -> pixels) earlier; fall back if unavailable
-                try:
-                    w_pix = max(3, int(round(vehicle.top_down_width * self.scaling)))
-                    l_pix = max(3, int(round(vehicle.top_down_length * self.scaling)))
-                except Exception:
-                    w_pix = l_pix = max(3, int(round(self.scaling)))
-                half_w = w_pix // 2
-                half_l = l_pix // 2
-                rect = (ex - half_l, ey - half_w, l_pix, w_pix)
-                pygame.draw.rect(road_lines_for_scene, (0, 255, 0), rect)
-                # add a thin black border for contrast
-                pygame.draw.rect(road_lines_for_scene, (0, 0, 0), rect, 1)
-            except Exception:
-                # fallback: single black pixel
-                road_lines_for_scene.fill((0, 0, 0), ((ex, ey), (1, 1)))
-            # Intentionally do NOT draw ego marker onto the global road_network canvas.
-            # This keeps channel 1 (road_network) free of ego-position markers.
-            pass
+            # Draw ego using the shared ObjectGraphics.display implementation so
+            # orientation and sizing match the rest of the top-down render chain.
+            # We draw the ego on the per-frame `road_lines_for_scene` surface so
+            # channel semantics remain the same (ego appears only in road_lines).
+            ObjectGraphics.display(
+                object=vehicle,
+                surface=road_lines_for_scene,
+                color=(0, 255, 0),
+                heading=vehicle.heading_theta,
+                draw_contour=True,
+                contour_width=1,
+            )
         except Exception:
-            pass
+            # Fallback: if for some reason ObjectGraphics fails, draw a single pixel
+            try:
+                ego_world_pix = road_lines_for_scene.vec2pix([raw_pos[0], raw_pos[1]])
+                ex = int(round(ego_world_pix[0]))
+                ey = int(round(ego_world_pix[1]))
+                road_lines_for_scene.fill((0, 0, 0), ((ex, ey), (1, 1)))
+            except Exception:
+                pass
 
         # Render only the two persistent canvases we keep in the BEV
         ret = self.obs_window.render(
