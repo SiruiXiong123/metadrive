@@ -334,8 +334,9 @@ class TopDownMultiChannel(TopDownObservation):
                     # increase width by 1.5x to make navigation lines more visible
                     base_outline = int(round(self.canvas_road_lines.pix(0.8)))
                     base_inner = int(round(self.canvas_road_lines.pix(0.4)))
-                    outline_w = max(2, int(round(base_outline * 1.5)))
-                    inner_w = max(1, int(round(base_inner * 1.5)))
+                    # original code used 1.5x multiplier; reduce final thickness to 80%
+                    outline_w = max(2, int(round(base_outline * 1.5 * 0.8)))
+                    inner_w = max(1, int(round(base_inner * 1.5 * 0.8)))
                     # draw navigation line as black
                     pygame.draw.line(road_lines_for_scene, (0, 0, 0), ego_pix, ck1_pix, outline_w)
                     pygame.draw.line(road_lines_for_scene, (0, 0, 0), ego_pix, ck1_pix, inner_w)
