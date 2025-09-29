@@ -125,7 +125,6 @@ class TopDownObservation(BaseObservation):
         b_box = self.road_network.get_bounding_box()
         self.canvas_background.fill(COLOR_BLACK)
         self.canvas_runtime.fill(COLOR_BLACK)
-        self.canvas_background.set_colorkey(self.canvas_background.BLACK)
         x_len = b_box[1] - b_box[0]
         y_len = b_box[3] - b_box[2]
         max_len = max(x_len, y_len) + 20  # Add more 20 meters
