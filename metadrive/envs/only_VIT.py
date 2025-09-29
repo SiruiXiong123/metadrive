@@ -14,7 +14,7 @@ from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
 
 
 class CustomCombinedExtractor(BaseFeaturesExtractor):
-    def __init__(self, observation_space: gym.spaces.Dict):
+    def __init__(self, observation_space):
         # We do not know features-dim here before going over all the items,
         # so put something dummy for now. PyTorch requires calling
         # nn.Module.__init__ before adding modules
@@ -22,11 +22,34 @@ class CustomCombinedExtractor(BaseFeaturesExtractor):
         device = (torch.device("cuda:0") if torch.cuda.is_available() else "cpu",)
         # torch.Size([B, 84, 84, 3, 4])
         # image shape: batch, {x, y}, chanels, time stack 4
-        image_shape: Box = observation_space.spaces["image"]
+        # observation_space can be either a Dict-like with a 'spaces' attribute or a Box-like
+        if hasattr(observation_space, 'spaces'):
+            image_space = None
+            # Try to get 'image' key first
+            try:
+                image_space = observation_space.spaces.get("image")
+            except Exception:
+                image_space = None
+            if image_space is None:
+                # fallback: pick the first Box-like in the dict
+                for v in getattr(observation_space, 'spaces', {}).values():
+                    if hasattr(v, 'shape'):
+                        image_space = v
+                        break
+                if image_space is None:
+                    raise ValueError("No Box-like image space found in observation_space Dict")
+        elif hasattr(observation_space, 'shape'):
+            image_space = observation_space
+        else:
+            raise ValueError(f"Unsupported observation_space type: {type(observation_space)}")
+
+        image_shape: Box = image_space
         chanels = math.prod(image_shape.shape[-2:])
 
         self.dinov2 = torch.hub.load("facebookresearch/dinov2", "dinov2_vits14_reg")
         self.dinov2 = self.dinov2.to(device[0])
+        # remember device and move subsequent submodules there as well
+        self.device = device[0]
 
         self.embedding_compression_1 = nn.Sequential(
             nn.Conv2d(
@@ -35,6 +58,8 @@ class CustomCombinedExtractor(BaseFeaturesExtractor):
             nn.LayerNorm((64, 16, 16)),
             nn.ELU(),
         )
+        # ensure module on same device as dinov2
+        self.embedding_compression_1 = self.embedding_compression_1.to(self.device)
         # self.embedding_compression_1 = nn.Conv2d(
         #     in_channels=384, out_channels=64, kernel_size=1, stride=1, bias=False
         # )
@@ -52,6 +77,7 @@ class CustomCombinedExtractor(BaseFeaturesExtractor):
             nn.LayerNorm((256)),
             nn.ELU(),
         )
+        self.compression_2_and_linear = self.compression_2_and_linear.to(self.device)
         # self.embedding_compression_2 = nn.Conv2d(
         #     in_channels=64 * 4, out_channels=32, kernel_size=3, stride=1, bias=False
         # )
@@ -66,34 +92,101 @@ class CustomCombinedExtractor(BaseFeaturesExtractor):
         self._features_dim = 256
 
     def forward(self, observations) -> torch.Tensor:
-        images: torch.Tensor = observations["image"]
-        chanels_third = images.permute((0, 4, 3, 1, 2))
-        shape = chanels_third.shape
-        stacked_frames = images.reshape(shape=tuple([shape[0] * shape[1], *shape[2:]]))
+        """
+        Expect flexible input formats from the environment. Supported formats:
+        - H x W x C (single image)
+        - B x H x W x C (batch of images)
+        - B x H x W x C x T (batch with time stack)
+        - H x W x C x T (single sample with time stack)
+
+        This function will normalize/reshape inputs into the form expected by
+        dinov2: stacked frames of shape (B*T, C, H, W). It also fixes the
+        previous bug where reshape was applied to the un-permuted tensor.
+        """
+        # Stable-Baselines may pass a dict with an 'image' key or a raw tensor/array.
+        # Try dict access first, otherwise fall back to treating observations as the image tensor.
+        try:
+            images = observations["image"]
+        except Exception:
+            images = observations
+
+        # Convert to torch tensor if needed
+        if not isinstance(images, torch.Tensor):
+            images = torch.as_tensor(images)
+
+        # Ensure float
+        images = images.float()
+
+        # Bring to a common 5D shape: B x H x W x C x T
+        if images.dim() == 3:
+            # H x W x C -> add batch and time dims
+            images = images.unsqueeze(0).unsqueeze(-1)  # 1 x H x W x C x 1
+        elif images.dim() == 4:
+            # Could be B x H x W x C  OR H x W x C x T (if first dim small like 224)
+            # Heuristic: if last dim is channels (1,3,4), assume B x H x W x C
+            if images.shape[-1] in (1, 3, 4):
+                images = images.unsqueeze(-1)  # B x H x W x C x 1
+            else:
+                # Treat as H x W x C x T -> add batch dim
+                images = images.unsqueeze(0)
+        elif images.dim() == 5:
+            # assume already B x H x W x C x T
+            pass
+        else:
+            raise ValueError(f"Unsupported image tensor dims: {images.dim()}")
+
+        # Now images is B x H x W x C x T
+        B, H, W, C, T = images.shape
+
+        # Make sure channel is last before permute; if channels not in {1,3,4}, try
+        if C not in (1, 3, 4):
+            # maybe the input is B x C x H x W x T (unlikely) -> try to move
+            images = images.permute(0, 3, 4, 1, 2)  # attempt fallback
+            B, H, W, C, T = images.shape
+
+        # Prepare for dinov2: B,T,C,H,W -> stack to (B*T, C, H, W)
+        chanels_third = images.permute(0, 4, 3, 1, 2).contiguous()  # B, T, C, H, W
+        Bp, Tp, Cp, Hp, Wp = chanels_third.shape
+        stacked_frames = chanels_third.reshape(Bp * Tp, Cp, Hp, Wp)
+
+        device = next(self.dinov2.parameters()).device if any(True for _ in self.dinov2.parameters()) else torch.device('cpu')
+        stacked_frames = stacked_frames.to(device)
+
         with torch.no_grad():
             result = self.dinov2.forward_features(stacked_frames)
             patch_embedings: torch.Tensor = result["x_norm_patchtokens"]
 
+        # patch_embedings is expected to have shape (N, num_patches, dim)
+        # reshape to (N, 16, 16, 384) then permute to (N, 384, 16, 16)
+        separated_patches = patch_embedings.reshape(-1, 16, 16, 384)
+        chanels_second = separated_patches.permute((0, 3, 1, 2)).contiguous()
 
-        separated_patches = patch_embedings.reshape(shape=tuple([-1, 16, 16, 384]))
-        chanels_second = separated_patches.permute((0, 3, 1, 2))
+        # Run the first compression (per-frame)
+        res = self.embedding_compression_1(chanels_second)  # (B*T, 64, 16, 16)
 
-        res = self.embedding_compression_1(chanels_second)
-        # res = self.norm_1(res)
-        # res: torch.Tensor = self.activate(res)
+        # Combine time frames back into batch dimension: (B, T*64, 16, 16)
+        # The downstream compression expects T==4 (original design). If the
+        # incoming time dimension differs, pad by repeating the last frame or
+        # truncate to the last 4 frames so channel count matches 64*4.
+        res = res.reshape(Bp, Tp, 64, 16, 16)  # B x T x 64 x 16 x 16
+        desired_T = 4
+        if Tp < desired_T:
+            # repeat last frame as many times as needed
+            last = res[:, -1:, ...]  # B x 1 x 64 x 16 x 16
+            repeats = desired_T - Tp
+            pad = last.repeat(1, repeats, 1, 1, 1)
+            res = torch.cat([res, pad], dim=1)
+            Tp = desired_T
+        elif Tp > desired_T:
+            # keep only the last desired_T frames
+            res = res[:, -desired_T:, ...]
+            Tp = desired_T
 
-        res = res.reshape((shape[0], shape[1] * 64, 16, 16))
+        res = res.reshape(Bp, Tp * 64, 16, 16)
 
+        # Final compression to feature vector
         res = self.compression_2_and_linear(res)
 
-        # res = self.embedding_compression_2(res)
-        # res = self.norm_2(res)
-        # res = self.activate(res)
-
-        # res = self.flatten(res)
-        # res = self.last_compression(res)
-        # res = self.norm_3(res)
-        # res = self.activate(res)
         return res
 
 #--------------------------two layer

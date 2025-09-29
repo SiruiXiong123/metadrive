@@ -109,7 +109,7 @@ cfg = {
         "show_line_to_navi_mark": True,
     },
     "distance": 25,
-    "resolution_size": 160,
+    "resolution_size": 180,
 }
 
 if __name__ == "__main__":
