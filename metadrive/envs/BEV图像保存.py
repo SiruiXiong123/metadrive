@@ -93,7 +93,7 @@ def show_bev_multi(bev_hwc):
     plt.show()
 
 cfg = {
-    "map": "OO",
+    "map": "SS",
     # "num_scenarios": 500,
     # "start_seed": 123,
     "random_lane_width": True,
@@ -108,8 +108,8 @@ cfg = {
         "show_line_to_dest": False,
         "show_line_to_navi_mark": True,
     },
-    "distance": 20,
-    "resolution_size": 120,
+    "distance": 25,
+    "resolution_size": 160,
 }
 
 if __name__ == "__main__":

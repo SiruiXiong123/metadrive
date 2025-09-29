@@ -69,8 +69,9 @@ class TopDownMultiChannel(TopDownObservation):
             vehicle_config, clip_rgb, onscreen=onscreen, resolution=resolution, max_distance=max_distance
         )
         #self.num_stacks = 2 + frame_stack
-        # now we have: road_network, road_lines -> 2 channels
-        self.num_stacks = 2
+        # now we have: road_network, road_lines -> originally 2 channels
+        # expand to 3 channels so channel0/channel1/channel2 can be set as needed
+        self.num_stacks = 3
         self.stack_traffic_flow = deque([], maxlen=(frame_stack - 1) * frame_skip + 1)
         self.stack_past_pos = deque(
             [], maxlen=(post_stack - 1) * frame_skip + 1
@@ -118,14 +119,16 @@ class TopDownMultiChannel(TopDownObservation):
         # Setup the maximize size of the canvas
         # scaling and center can be easily found by bounding box
         b_box = self.road_network.get_bounding_box()
-        self.canvas_navigation.fill(COLOR_BLACK)
-        self.canvas_ego.fill(COLOR_BLACK)
-        self.canvas_road_network.fill(COLOR_BLACK)
+        # Fill canvases with white background
+        self.canvas_navigation.fill(COLOR_WHITE)
+        self.canvas_ego.fill(COLOR_WHITE)
+        self.canvas_road_network.fill(COLOR_WHITE)
         # clear road_lines before drawing so it only contains lines
-        self.canvas_road_lines.fill(COLOR_BLACK)
-        self.canvas_runtime.fill(COLOR_BLACK)
-        self.canvas_background.fill(COLOR_BLACK)
-        self.canvas_background.set_colorkey(self.canvas_background.BLACK)
+        self.canvas_road_lines.fill(COLOR_WHITE)
+        self.canvas_runtime.fill(COLOR_WHITE)
+        self.canvas_background.fill(COLOR_WHITE)
+        # do not set white as transparent; keep white background
+        # (previously used set_colorkey which caused transparency issues)
         x_len = b_box[1] - b_box[0]
         y_len = b_box[3] - b_box[2]
         max_len = max(x_len, y_len) + 20  # Add more 20 meters
@@ -168,7 +171,8 @@ class TopDownMultiChannel(TopDownObservation):
                         LaneGraphics.display(l, self.canvas_background, two_side)
                         # ensure road_lines is clean then draw only lane lines to road_lines canvas
                         # draw lines in white and slightly thicker for visibility in the separate channel
-                        LaneGraphics.display(l, self.canvas_road_lines, two_side, use_line_color=False, color=(255, 255, 255))
+                        # draw lane lines in black (on white background)
+                        LaneGraphics.display(l, self.canvas_road_lines, two_side, use_line_color=False, color=(0, 0, 0))
         elif hasattr(self.engine, "map_manager"):
             for data in self.engine.map_manager.current_map.blocks[-1].map_data.values():
                 if ScenarioDescription.POLYLINE in data:
@@ -188,7 +192,7 @@ class TopDownMultiChannel(TopDownObservation):
                             e_p = poly[index + 1]
                             pygame.draw.line(
                                 self.canvas_road_lines,
-                                (255, 255, 255),
+                                (0, 0, 0),
                                 self.canvas_road_lines.vec2pix([s_p[0], s_p[1]]),
                                 self.canvas_road_lines.vec2pix([e_p[0], e_p[1]]),
                                 max(1, self.canvas_road_lines.pix(PGDrivableAreaProperty.LANE_LINE_WIDTH) * 2)
@@ -200,9 +204,9 @@ class TopDownMultiChannel(TopDownObservation):
         try:
             import pygame.surfarray as surfarray
             arr = surfarray.pixels3d(self.canvas_road_lines)
-            # any non-black channel -> set to 255
-            mask = (arr.sum(axis=2) > 0)
-            arr[mask] = 255
+            # any non-white pixel -> set to black (0)
+            mask = (arr.sum(axis=2) < 255 * 3)
+            arr[mask] = 0
             del arr
         except Exception:
             # fallback: do nothing if surfarray is unavailable
@@ -213,7 +217,8 @@ class TopDownMultiChannel(TopDownObservation):
 
     def _refresh(self, canvas, pos, clip_size):
         canvas.set_clip((pos[0] - clip_size[0] / 2, pos[1] - clip_size[1] / 2, clip_size[0], clip_size[1]))
-        canvas.fill(COLOR_BLACK)
+        # initialize the active area with white background to avoid black artifacts
+        canvas.fill(COLOR_WHITE)
 
     def draw_scene(self):
         # Set the active area that can be modify to accelerate
@@ -244,7 +249,8 @@ class TopDownMultiChannel(TopDownObservation):
                 continue
             h = v.heading_theta
             h = h if abs(h) > 2 * np.pi / 180 else 0
-            ObjectGraphics.display(object=v, surface=self.canvas_runtime, heading=h, color=ObjectGraphics.BLUE)
+            # draw other vehicles as black silhouettes on runtime canvas
+            ObjectGraphics.display(object=v, surface=self.canvas_runtime, heading=h, color=(0, 0, 0))
 
         # past_pos tracking/drawing disabled — we intentionally omit this channel
         # raw_pos = vehicle.position
@@ -306,17 +312,16 @@ class TopDownMultiChannel(TopDownObservation):
                 r_inner = max(2, r_outer - 1)
                 try:
                     x1, y1 = world_to_pix(road_lines_for_scene, ckpt1)
-                    # dark outline
+                    # dark outline and inner fill both black (black on white background)
                     pygame.draw.circle(road_lines_for_scene, (0, 0, 0), (x1, y1), r_outer)
-                    # bright inner fill (yellow) for visibility
-                    pygame.draw.circle(road_lines_for_scene, (255, 255, 0), (x1, y1), r_inner)
+                    pygame.draw.circle(road_lines_for_scene, (0, 0, 0), (x1, y1), r_inner)
                 except Exception:
                     pass
                 try:
                     if ckpt2 is not None:
                         x2, y2 = world_to_pix(road_lines_for_scene, ckpt2)
                         pygame.draw.circle(road_lines_for_scene, (0, 0, 0), (x2, y2), max(3, r_outer - 1))
-                        pygame.draw.circle(road_lines_for_scene, (255, 200, 0), (x2, y2), max(2, r_inner - 1))
+                        pygame.draw.circle(road_lines_for_scene, (0, 0, 0), (x2, y2), max(2, r_inner - 1))
                 except Exception:
                     pass
 
@@ -331,12 +336,13 @@ class TopDownMultiChannel(TopDownObservation):
                     base_inner = int(round(self.canvas_road_lines.pix(0.4)))
                     outline_w = max(2, int(round(base_outline * 1.5)))
                     inner_w = max(1, int(round(base_inner * 1.5)))
+                    # draw navigation line as black
                     pygame.draw.line(road_lines_for_scene, (0, 0, 0), ego_pix, ck1_pix, outline_w)
-                    pygame.draw.line(road_lines_for_scene, (255, 220, 0), ego_pix, ck1_pix, inner_w)
+                    pygame.draw.line(road_lines_for_scene, (0, 0, 0), ego_pix, ck1_pix, inner_w)
                     if ckpt2 is not None:
                         ck2_pix = world_to_pix(road_lines_for_scene, ckpt2)
                         pygame.draw.line(road_lines_for_scene, (0, 0, 0), ck1_pix, ck2_pix, outline_w)
-                        pygame.draw.line(road_lines_for_scene, (255, 220, 0), ck1_pix, ck2_pix, inner_w)
+                        pygame.draw.line(road_lines_for_scene, (0, 0, 0), ck1_pix, ck2_pix, inner_w)
                 except Exception:
                     pass
         except Exception:
@@ -364,33 +370,11 @@ class TopDownMultiChannel(TopDownObservation):
             outer = (ex - half, ey - half, square_size, square_size)
             inner = (ex - half + 1, ey - half + 1, max(1, square_size - 2), max(1, square_size - 2))
             try:
-                # draw black outer square then white inner square
+                # draw a filled black square for ego marker
                 pygame.draw.rect(road_lines_for_scene, (0, 0, 0), outer)
-                pygame.draw.rect(road_lines_for_scene, (255, 255, 255), inner)
             except Exception:
-                # fallback: single white pixel
-                road_lines_for_scene.fill((255, 255, 255), ((ex, ey), (1, 1)))
-            # Also draw a circular halo marker to make ego position more visible
-            try:
-                halo_r = max(4, square_size // 3)
-                # black border then larger white inner circle on the per-scene road_lines
-                pygame.draw.circle(road_lines_for_scene, (0, 0, 0), (ex, ey), halo_r + 2)
-                pygame.draw.circle(road_lines_for_scene, (255, 255, 255), (ex, ey), halo_r + 1)
-                # Add an additive semi-transparent white halo to make the marker visually brighter
-                try:
-                    size = int((halo_r + 4) * 2)
-                    halo_surf = pygame.Surface((size, size), pygame.SRCALPHA)
-                    c = (size // 2, size // 2)
-                    pygame.draw.circle(halo_surf, (255, 255, 255, 140), c, halo_r + 2)
-                    surf_pos = (int(ex - c[0]), int(ey - c[1]))
-                    try:
-                        road_lines_for_scene.blit(halo_surf, surf_pos, special_flags=pygame.BLEND_ADD)
-                    except Exception:
-                        road_lines_for_scene.blit(halo_surf, surf_pos)
-                except Exception:
-                    pass
-            except Exception:
-                pass
+                # fallback: single black pixel
+                road_lines_for_scene.fill((0, 0, 0), ((ex, ey), (1, 1)))
             # Intentionally do NOT draw ego marker onto the global road_network canvas.
             # This keeps channel 1 (road_network) free of ego-position markers.
             pass
@@ -448,10 +432,16 @@ class TopDownMultiChannel(TopDownObservation):
         # self.stack_traffic_flow.append(img_dict["traffic_flow"])
 
         # Build BEV image channels without traffic_flow
+        # Make channel 0 the same as channel 1 (use road_lines for both)
+        road_lines = img_dict.get("road_lines", np.zeros_like(img_dict["road_network"]))
+        # ensure we don't modify the original arrays when reusing
+        ch0 = road_lines.copy()
+        ch1 = road_lines.copy()
+        ch2 = road_lines
         img = [
-            img_dict["road_network"] * 2,
-            # new channel: road_lines (only lines, no drivable area fill)
-            img_dict.get("road_lines", np.zeros_like(img_dict["road_network"])),
+            ch0,
+            ch1,
+            ch2,
         ]  # past_pos and traffic_flow omitted intentionally
 
         # Stacked traffic flow

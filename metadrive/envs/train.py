@@ -12,8 +12,7 @@ import os
 from metadrive.component.sensors.rgb_camera import RGBCamera
 from stable_baselines3.common.vec_env import DummyVecEnv
 from only_VIT import CustomViTPolicy
-import yaml
-from yaml_ppo import build_ppo_params
+
 
 
 ppo_params = dict(

@@ -29,10 +29,10 @@ class ObservationWindow:
         )
 
         self.canvas_display = pygame.Surface(self.resolution)
-        self.canvas_display.fill(COLOR_BLACK)
+        self.canvas_display.fill(pygame.Color("white"))
 
     def reset(self, canvas_runtime):
-        canvas_runtime.fill(COLOR_BLACK)
+        canvas_runtime.fill(pygame.Color("white"))
 
         # Assume max_range is only the radius!
         self.receptive_field_double = (
@@ -43,9 +43,9 @@ class ObservationWindow:
             int(canvas_runtime.pix(self.max_range[0])) * 2, int(canvas_runtime.pix(self.max_range[1])) * 2
         )
         self.canvas_rotate = pygame.Surface(self.receptive_field_double)
-        self.canvas_rotate.fill(COLOR_BLACK)
-        self.canvas_display.fill(COLOR_BLACK)
-        self.canvas_uncropped.fill(COLOR_BLACK)
+        self.canvas_rotate.fill(pygame.Color("white"))
+        self.canvas_display.fill(pygame.Color("white"))
+        self.canvas_uncropped.fill(pygame.Color("white"))
 
     def _blit(self, canvas, position):
         self.canvas_rotate.blit(
@@ -483,7 +483,8 @@ class ObservationWindowMultiChannel:
     def get_canvas_display(self):
         if self.canvas_display is None:
             self.canvas_display = pygame.Surface(self.resolution)
-        self.canvas_display.fill(COLOR_BLACK)
+        # Use white background for the combined preview canvas
+        self.canvas_display.fill(pygame.Color("white"))
         return self.canvas_display
 
     def reset(self, canvas_runtime):

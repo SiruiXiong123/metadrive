@@ -29,7 +29,6 @@ cfg = {
     "controller": "keyboard",
     "vehicle_config": {
         "show_navi_mark": True,
-        "show_line_to_dest": False,
         "show_line_to_navi_mark": True,
     },
 }
