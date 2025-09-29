@@ -63,7 +63,8 @@ class TopDownMultiChannel(TopDownObservation):
         post_stack: int = 5,
         frame_skip: int = 5,
         resolution=None,
-        max_distance=50
+        max_distance=50,
+        color: bool = True,
     ):
         super(TopDownMultiChannel, self).__init__(
             vehicle_config, clip_rgb, onscreen=onscreen, resolution=resolution, max_distance=max_distance
@@ -83,6 +84,10 @@ class TopDownMultiChannel(TopDownObservation):
         # inspecting pixels on the per-scene road_lines surface and saving
         # annotated debug images on mismatch. Turn off after debugging.
         self.debug_chk = True
+        # When True, `observe` will return a color RGB HWC image.
+        # Default True (方案 A): return color by default. Set to False to keep
+        # original grayscale stacked behavior.
+        self.debug_color = bool(color)
         self.max_distance = max_distance
         self.scaling = self.resolution[0] / max_distance
         assert self.scaling == self.resolution[1] / self.max_distance
@@ -158,7 +163,8 @@ class TopDownMultiChannel(TopDownObservation):
             # TODO: draw edge network navigation
             pass
         elif isinstance(self.target_vehicle.navigation, TrajectoryNavigation):
-            self.draw_navigation_trajectory(self.canvas_background, (0, 255, 0))
+            # draw navigation trajectory in light blue for debug visibility
+            self.draw_navigation_trajectory(self.canvas_background, (135, 206, 250))
 
         if isinstance(self.road_network, NodeRoadNetwork):
             for _from in self.road_network.graph.keys():
@@ -171,8 +177,8 @@ class TopDownMultiChannel(TopDownObservation):
                         LaneGraphics.display(l, self.canvas_background, two_side)
                         # ensure road_lines is clean then draw only lane lines to road_lines canvas
                         # draw lines in white and slightly thicker for visibility in the separate channel
-                        # draw lane lines in black (on white background)
-                        LaneGraphics.display(l, self.canvas_road_lines, two_side, use_line_color=False, color=(0, 0, 0))
+                        # draw lane lines in orange-yellow on white background
+                        LaneGraphics.display(l, self.canvas_road_lines, two_side, use_line_color=False, color=(255, 175, 35))
         elif hasattr(self.engine, "map_manager"):
             for data in self.engine.map_manager.current_map.blocks[-1].map_data.values():
                 if ScenarioDescription.POLYLINE in data:
@@ -192,7 +198,7 @@ class TopDownMultiChannel(TopDownObservation):
                             e_p = poly[index + 1]
                             pygame.draw.line(
                                 self.canvas_road_lines,
-                                (0, 0, 0),
+                                (255, 175, 35),
                                 self.canvas_road_lines.vec2pix([s_p[0], s_p[1]]),
                                 self.canvas_road_lines.vec2pix([e_p[0], e_p[1]]),
                                 max(1, self.canvas_road_lines.pix(PGDrivableAreaProperty.LANE_LINE_WIDTH) * 2)
@@ -204,9 +210,9 @@ class TopDownMultiChannel(TopDownObservation):
         try:
             import pygame.surfarray as surfarray
             arr = surfarray.pixels3d(self.canvas_road_lines)
-            # any non-white pixel -> set to black (0)
+            # any non-white pixel -> set to orange-yellow so road_lines are consistently colored
             mask = (arr.sum(axis=2) < 255 * 3)
-            arr[mask] = 0
+            arr[mask] = (255, 175, 35)
             del arr
         except Exception:
             # fallback: do nothing if surfarray is unavailable
@@ -304,48 +310,48 @@ class TopDownMultiChannel(TopDownObservation):
             # NOTE: if show_line is enabled we intentionally skip checkpoint markers
             # so that only the navigation line is visible when the user requests it.
             if show_ckpt and ckpt1 is not None and not show_line:
-                try:
-                    # larger radius in world pixels scaled to surface
-                    r_outer = max(3, int(round(self.canvas_road_lines.pix(1.0))))
-                except Exception:
-                    r_outer = 4
-                r_inner = max(2, r_outer - 1)
-                try:
-                    x1, y1 = world_to_pix(road_lines_for_scene, ckpt1)
-                    # dark outline and inner fill both black (black on white background)
-                    pygame.draw.circle(road_lines_for_scene, (0, 0, 0), (x1, y1), r_outer)
-                    pygame.draw.circle(road_lines_for_scene, (0, 0, 0), (x1, y1), r_inner)
-                except Exception:
-                    pass
-                try:
-                    if ckpt2 is not None:
-                        x2, y2 = world_to_pix(road_lines_for_scene, ckpt2)
-                        pygame.draw.circle(road_lines_for_scene, (0, 0, 0), (x2, y2), max(3, r_outer - 1))
-                        pygame.draw.circle(road_lines_for_scene, (0, 0, 0), (x2, y2), max(2, r_inner - 1))
-                except Exception:
-                    pass
+                    try:
+                        # larger radius in world pixels scaled to surface
+                        r_outer = max(3, int(round(self.canvas_road_lines.pix(1.0))))
+                    except Exception:
+                        r_outer = 4
+                    r_inner = max(2, r_outer - 1)
+                    try:
+                        x1, y1 = world_to_pix(road_lines_for_scene, ckpt1)
+                        # draw checkpoint markers in light blue for navigation
+                        pygame.draw.circle(road_lines_for_scene, (135, 206, 250), (x1, y1), r_outer)
+                        pygame.draw.circle(road_lines_for_scene, (135, 206, 250), (x1, y1), r_inner)
+                    except Exception:
+                        pass
+                    try:
+                        if ckpt2 is not None:
+                            x2, y2 = world_to_pix(road_lines_for_scene, ckpt2)
+                            pygame.draw.circle(road_lines_for_scene, (135, 206, 250), (x2, y2), max(3, r_outer - 1))
+                            pygame.draw.circle(road_lines_for_scene, (135, 206, 250), (x2, y2), max(2, r_inner - 1))
+                    except Exception:
+                        pass
 
             # draw line(s) from ego to first checkpoint and optionally to the next checkpoint
             if show_line and ckpt1 is not None:
-                try:
-                    ego_pix = world_to_pix(road_lines_for_scene, self.target_vehicle.position)
-                    ck1_pix = world_to_pix(road_lines_for_scene, ckpt1)
-                    # draw a darker thicker line as outline for contrast
-                    # increase width by 1.5x to make navigation lines more visible
-                    base_outline = int(round(self.canvas_road_lines.pix(0.8)))
-                    base_inner = int(round(self.canvas_road_lines.pix(0.4)))
-                    # original code used 1.5x multiplier; reduce final thickness to 80%
-                    outline_w = max(2, int(round(base_outline * 1.5 * 0.8)))
-                    inner_w = max(1, int(round(base_inner * 1.5 * 0.8)))
-                    # draw navigation line as black
-                    pygame.draw.line(road_lines_for_scene, (0, 0, 0), ego_pix, ck1_pix, outline_w)
-                    pygame.draw.line(road_lines_for_scene, (0, 0, 0), ego_pix, ck1_pix, inner_w)
-                    if ckpt2 is not None:
-                        ck2_pix = world_to_pix(road_lines_for_scene, ckpt2)
-                        pygame.draw.line(road_lines_for_scene, (0, 0, 0), ck1_pix, ck2_pix, outline_w)
-                        pygame.draw.line(road_lines_for_scene, (0, 0, 0), ck1_pix, ck2_pix, inner_w)
-                except Exception:
-                    pass
+                    try:
+                        ego_pix = world_to_pix(road_lines_for_scene, self.target_vehicle.position)
+                        ck1_pix = world_to_pix(road_lines_for_scene, ckpt1)
+                        # draw a darker thicker line as outline for contrast
+                        # increase width by 1.5x to make navigation lines more visible
+                        base_outline = int(round(self.canvas_road_lines.pix(0.8)))
+                        base_inner = int(round(self.canvas_road_lines.pix(0.4)))
+                        # original code used 1.5x multiplier; reduce final thickness to 80%
+                        outline_w = max(2, int(round(base_outline * 1.1 )))
+                        inner_w = max(1, int(round(base_inner * 1.1 )))
+                        # draw navigation line as orange-yellow
+                        pygame.draw.line(road_lines_for_scene, (135, 206, 250), ego_pix, ck1_pix, outline_w)
+                        pygame.draw.line(road_lines_for_scene, (135, 206, 250), ego_pix, ck1_pix, inner_w)
+                        if ckpt2 is not None:
+                            ck2_pix = world_to_pix(road_lines_for_scene, ckpt2)
+                            pygame.draw.line(road_lines_for_scene, (135, 206, 250), ck1_pix, ck2_pix, outline_w)
+                            pygame.draw.line(road_lines_for_scene, (135, 206, 250), ck1_pix, ck2_pix, inner_w)
+                    except Exception:
+                        pass
         except Exception:
             # navigation not present or not ready; skip gracefully
             pass
@@ -371,8 +377,19 @@ class TopDownMultiChannel(TopDownObservation):
             outer = (ex - half, ey - half, square_size, square_size)
             inner = (ex - half + 1, ey - half + 1, max(1, square_size - 2), max(1, square_size - 2))
             try:
-                # draw a filled black square for ego marker
-                pygame.draw.rect(road_lines_for_scene, (0, 0, 0), outer)
+                # draw a filled green rectangle scaled to vehicle top-down dimensions
+                # Compute pixel width/length (meters -> pixels) earlier; fall back if unavailable
+                try:
+                    w_pix = max(3, int(round(vehicle.top_down_width * self.scaling)))
+                    l_pix = max(3, int(round(vehicle.top_down_length * self.scaling)))
+                except Exception:
+                    w_pix = l_pix = max(3, int(round(self.scaling)))
+                half_w = w_pix // 2
+                half_l = l_pix // 2
+                rect = (ex - half_l, ey - half_w, l_pix, w_pix)
+                pygame.draw.rect(road_lines_for_scene, (0, 255, 0), rect)
+                # add a thin black border for contrast
+                pygame.draw.rect(road_lines_for_scene, (0, 0, 0), rect, 1)
             except Exception:
                 # fallback: single black pixel
                 road_lines_for_scene.fill((0, 0, 0), ((ex, ey), (1, 1)))
@@ -420,6 +437,33 @@ class TopDownMultiChannel(TopDownObservation):
         if "road_lines" in surface_dict:
             surface_dict["road_lines"] = pygame.transform.smoothscale(surface_dict["road_lines"], self.resolution)
         img_dict = {k: pygame.surfarray.array3d(surface) for k, surface in surface_dict.items()}
+
+        # Debug color mode: return an RGB HWC image for inspection
+        if self.debug_color:
+            # surfaces from surfarray are (W, H, 3) in dtype uint8
+            # we'll overlay road_lines over road_network so lines (orange) are visible
+            road_net = img_dict.get("road_network")
+            road_lines = img_dict.get("road_lines")
+            if road_net is None:
+                # fallback: create blank white canvas
+                road_net = np.ones_like(road_lines) * 255 if road_lines is not None else np.full((self.resolution[0], self.resolution[1], 3), 255, dtype=np.uint8)
+            # prefer to use road_lines mask where not white
+            try:
+                mask = None
+                if road_lines is not None:
+                    mask = (road_lines.sum(axis=2) < 255 * 3)
+                # Make a copy to avoid mutating original
+                rgb = road_net.copy()
+                if mask is not None:
+                    rgb[mask] = road_lines[mask]
+            except Exception:
+                rgb = road_net.copy()
+
+            # transpose from (W,H,3) -> (H,W,3)
+            rgb = np.transpose(rgb, (1, 0, 2))
+            if self.norm_pixel:
+                rgb = rgb.astype(np.float32) / 255.0
+            return rgb
 
         # Gray scale
         img_dict = {k: self._transform(img) for k, img in img_dict.items()}
@@ -491,8 +535,17 @@ class TopDownMultiChannel(TopDownObservation):
 
     @property
     def observation_space(self):
-        shape = self.obs_shape + (self.num_stacks, )
-        if self.norm_pixel:
-            return gym.spaces.Box(-0.0, 1.0, shape=shape, dtype=np.float32)
+        # If color mode is enabled, observation is HxWx3 RGB. Otherwise keep
+        # original stacked single-channel shape.
+        if getattr(self, 'debug_color', False):
+            shape = self.obs_shape + (3,)
+            if self.norm_pixel:
+                return gym.spaces.Box(0.0, 1.0, shape=shape, dtype=np.float32)
+            else:
+                return gym.spaces.Box(0, 255, shape=shape, dtype=np.uint8)
         else:
-            return gym.spaces.Box(0, 255, shape=shape, dtype=np.uint8)
+            shape = self.obs_shape + (self.num_stacks, )
+            if self.norm_pixel:
+                return gym.spaces.Box(-0.0, 1.0, shape=shape, dtype=np.float32)
+            else:
+                return gym.spaces.Box(0, 255, shape=shape, dtype=np.uint8)
