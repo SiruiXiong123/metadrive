@@ -23,7 +23,7 @@ from metadrive.component.navigation_module.trajectory_navigation import Trajecto
 
 pygame = import_pygame()
 COLOR_WHITE = pygame.Color("white")
-DEFAULT_TRAJECTORY_LANE_WIDTH = 3
+DEFAULT_TRAJECTORY_LANE_WIDTH = 4
 
 def world_to_bev(world_pos, ego_pos, ego_heading, scaling, resolution):
         diff = world_pos - ego_pos                   # 相对 ego
@@ -293,21 +293,30 @@ class TopDownMultiChannel(TopDownObservation):
                 p = surface.vec2pix([world_pos[0], world_pos[1]])
                 return int(round(p[0])), int(round(p[1]))
 
-            # draw checkpoint markers (small filled circles)
-            if show_ckpt and ckpt1 is not None:
+            # draw checkpoint markers (use a slightly larger marker with dark outline
+            # and bright inner color for better contrast in BEV channel)
+            # NOTE: if show_line is enabled we intentionally skip checkpoint markers
+            # so that only the navigation line is visible when the user requests it.
+            if show_ckpt and ckpt1 is not None and not show_line:
                 try:
-                    r = max(2, int(round(self.canvas_road_lines.pix(0.5))))
+                    # larger radius in world pixels scaled to surface
+                    r_outer = max(3, int(round(self.canvas_road_lines.pix(1.0))))
                 except Exception:
-                    r = 3
+                    r_outer = 4
+                r_inner = max(2, r_outer - 1)
                 try:
                     x1, y1 = world_to_pix(road_lines_for_scene, ckpt1)
-                    pygame.draw.circle(road_lines_for_scene, (255, 0, 0), (x1, y1), r)
+                    # dark outline
+                    pygame.draw.circle(road_lines_for_scene, (0, 0, 0), (x1, y1), r_outer)
+                    # bright inner fill (yellow) for visibility
+                    pygame.draw.circle(road_lines_for_scene, (255, 255, 0), (x1, y1), r_inner)
                 except Exception:
                     pass
                 try:
                     if ckpt2 is not None:
                         x2, y2 = world_to_pix(road_lines_for_scene, ckpt2)
-                        pygame.draw.circle(road_lines_for_scene, (200, 120, 0), (x2, y2), max(2, r - 1))
+                        pygame.draw.circle(road_lines_for_scene, (0, 0, 0), (x2, y2), max(3, r_outer - 1))
+                        pygame.draw.circle(road_lines_for_scene, (255, 200, 0), (x2, y2), max(2, r_inner - 1))
                 except Exception:
                     pass
 
@@ -316,10 +325,18 @@ class TopDownMultiChannel(TopDownObservation):
                 try:
                     ego_pix = world_to_pix(road_lines_for_scene, self.target_vehicle.position)
                     ck1_pix = world_to_pix(road_lines_for_scene, ckpt1)
-                    pygame.draw.line(road_lines_for_scene, (255, 200, 0), ego_pix, ck1_pix, max(1, int(round(self.canvas_road_lines.pix(0.2)))))
+                    # draw a darker thicker line as outline for contrast
+                    # increase width by 1.5x to make navigation lines more visible
+                    base_outline = int(round(self.canvas_road_lines.pix(0.8)))
+                    base_inner = int(round(self.canvas_road_lines.pix(0.4)))
+                    outline_w = max(2, int(round(base_outline * 1.5)))
+                    inner_w = max(1, int(round(base_inner * 1.5)))
+                    pygame.draw.line(road_lines_for_scene, (0, 0, 0), ego_pix, ck1_pix, outline_w)
+                    pygame.draw.line(road_lines_for_scene, (255, 220, 0), ego_pix, ck1_pix, inner_w)
                     if ckpt2 is not None:
                         ck2_pix = world_to_pix(road_lines_for_scene, ckpt2)
-                        pygame.draw.line(road_lines_for_scene, (255, 200, 0), ck1_pix, ck2_pix, max(1, int(round(self.canvas_road_lines.pix(0.15)))))
+                        pygame.draw.line(road_lines_for_scene, (0, 0, 0), ck1_pix, ck2_pix, outline_w)
+                        pygame.draw.line(road_lines_for_scene, (255, 220, 0), ck1_pix, ck2_pix, inner_w)
                 except Exception:
                     pass
         except Exception:
