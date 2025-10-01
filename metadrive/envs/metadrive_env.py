@@ -20,7 +20,7 @@ METADRIVE_DEFAULT_CONFIG = dict(
     num_scenarios=1,
 
     # ===== PG Map Config =====
-    map=3,  # int or string: an easy way to fill map_config
+    map=2,  # int or string: an easy way to fill map_config
     block_dist_config=PGBlockDistConfig,
     random_lane_width=False,
     random_lane_num=False,

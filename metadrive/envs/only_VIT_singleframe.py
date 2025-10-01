@@ -14,11 +14,12 @@ from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
 
 
 class CustomCombinedExtractor(BaseFeaturesExtractor):
-    def __init__(self, observation_space):
+    def __init__(self, observation_space, frames: int = 1, temporal_pool: Union[None, str] = None):
         # We do not know features-dim here before going over all the items,
         # so put something dummy for now. PyTorch requires calling
         # nn.Module.__init__ before adding modules
         super().__init__(observation_space, features_dim=1)
+
         device = (torch.device("cuda:0") if torch.cuda.is_available() else "cpu",)
         # torch.Size([B, 84, 84, 3, 4])
         # image shape: batch, {x, y}, chanels, time stack 4
@@ -46,10 +47,27 @@ class CustomCombinedExtractor(BaseFeaturesExtractor):
         image_shape: Box = image_space
         chanels = math.prod(image_shape.shape[-2:])
 
+        # detect optional state vector in observation_space (Dict case)
+        self.state_dim = 0
+        try:
+            if hasattr(observation_space, 'spaces'):
+                state_space = observation_space.spaces.get("state")
+                if state_space is not None and hasattr(state_space, 'shape'):
+                    # flatten any trailing dims
+                    sd = int(math.prod(state_space.shape))
+                    self.state_dim = sd
+        except Exception:
+            self.state_dim = 0
+
         self.dinov2 = torch.hub.load("facebookresearch/dinov2", "dinov2_vits14_reg")
         self.dinov2 = self.dinov2.to(device[0])
         # remember device and move subsequent submodules there as well
         self.device = device[0]
+        # how many frames we expect to concatenate (used when temporal_pool is None)
+        self.frames = int(frames)
+        # temporal_pool: if 'mean', average across time and use a single-frame pipeline
+        # if None or 'concat', keep original concatenation behavior
+        self.temporal_pool = temporal_pool
 
         self.embedding_compression_1 = nn.Sequential(
             nn.Conv2d(
@@ -66,9 +84,18 @@ class CustomCombinedExtractor(BaseFeaturesExtractor):
         # self.norm_1 = nn.LayerNorm((64, 16, 16))
         # self.activate = nn.ELU()
 
+        # Build the second compression block depending on temporal handling.
+        # If using concatenation across time (default behavior), the expected
+        # in_channels is 64 * frames. If using temporal pooling (mean), then
+        # in_channels is 64.
+        if self.temporal_pool == 'mean':
+            comp_in_channels = 64
+        else:
+            comp_in_channels = 64 * max(1, self.frames)
+
         self.compression_2_and_linear = nn.Sequential(
             nn.Conv2d(
-                in_channels=64 * 4, out_channels=32, kernel_size=3, stride=1, bias=False
+                in_channels=comp_in_channels, out_channels=32, kernel_size=3, stride=1, bias=False
             ),
             nn.LayerNorm((32, 14, 14)),
             nn.ELU(),
@@ -78,6 +105,8 @@ class CustomCombinedExtractor(BaseFeaturesExtractor):
             nn.ELU(),
         )
         self.compression_2_and_linear = self.compression_2_and_linear.to(self.device)
+        # Update the features dim manually (ViT features 256 + optional state dim)
+        self._features_dim = 256 + max(0, int(self.state_dim))
         # self.embedding_compression_2 = nn.Conv2d(
         #     in_channels=64 * 4, out_channels=32, kernel_size=3, stride=1, bias=False
         # )
@@ -88,8 +117,7 @@ class CustomCombinedExtractor(BaseFeaturesExtractor):
         # )
         # self.norm_3 = nn.LayerNorm((256))
 
-        # Update the features dim manually
-        self._features_dim = 256
+    
 
     def forward(self, observations) -> torch.Tensor:
         """
@@ -109,6 +137,14 @@ class CustomCombinedExtractor(BaseFeaturesExtractor):
             images = observations["image"]
         except Exception:
             images = observations
+
+        # extract state if provided in the dict (keep raw for later batching)
+        states_raw = None
+        try:
+            # observations may be a dict-like
+            states_raw = observations.get("state") if isinstance(observations, dict) else None
+        except Exception:
+            states_raw = None
 
         # Convert to torch tensor if needed
         if not isinstance(images, torch.Tensor):
@@ -144,10 +180,35 @@ class CustomCombinedExtractor(BaseFeaturesExtractor):
             images = images.permute(0, 3, 4, 1, 2)  # attempt fallback
             B, H, W, C, T = images.shape
 
-        # Prepare for dinov2: B,T,C,H,W -> stack to (B*T, C, H, W)
+    # Prepare for dinov2: B,T,C,H,W -> stack to (B*T, C, H, W)
         chanels_third = images.permute(0, 4, 3, 1, 2).contiguous()  # B, T, C, H, W
         Bp, Tp, Cp, Hp, Wp = chanels_third.shape
         stacked_frames = chanels_third.reshape(Bp * Tp, Cp, Hp, Wp)
+
+        # prepare state tensor if present
+        state_tensor = None
+        if states_raw is not None:
+            # convert to tensor and ensure batch dim matches Bp
+            if not isinstance(states_raw, torch.Tensor):
+                try:
+                    states_raw = torch.as_tensor(states_raw)
+                except Exception:
+                    states_raw = None
+            if isinstance(states_raw, torch.Tensor):
+                # ensure float
+                states_raw = states_raw.float()
+                # If state is given per-sample with shape (B, D) or (D,), handle accordingly
+                if states_raw.dim() == 1:
+                    # single sample, expand to batch
+                    states_raw = states_raw.unsqueeze(0)
+                # If batch size mismatches, try to broadcast a single state to all batch items
+                if states_raw.shape[0] != Bp:
+                    if states_raw.shape[0] == 1:
+                        states_raw = states_raw.repeat(Bp, *([1] * (states_raw.dim() - 1)))
+                    else:
+                        # leave as-is; mismatch will be caught later
+                        pass
+                state_tensor = states_raw
 
         device = next(self.dinov2.parameters()).device if any(True for _ in self.dinov2.parameters()) else torch.device('cpu')
         stacked_frames = stacked_frames.to(device)
@@ -165,11 +226,27 @@ class CustomCombinedExtractor(BaseFeaturesExtractor):
         res = self.embedding_compression_1(chanels_second)  # (B*T, 64, 16, 16)
 
         # Combine time frames back into batch dimension: (B, T*64, 16, 16)
-        # The downstream compression expects T==4 (original design). If the
-        # incoming time dimension differs, pad by repeating the last frame or
-        # truncate to the last 4 frames so channel count matches 64*4.
+        # Reshape to (B, T, 64, 16, 16)
         res = res.reshape(Bp, Tp, 64, 16, 16)  # B x T x 64 x 16 x 16
-        desired_T = 4
+
+        if self.temporal_pool == 'mean':
+            # Average across time dimension -> (B, 64, 16, 16)
+            res = res.mean(dim=1)  # B x 64 x 16 x 16
+            # compression_2_and_linear expects in_channels=64 in this mode
+            res = self.compression_2_and_linear(res)
+            # attach state if present (same logic as after final compression)
+            if state_tensor is not None:
+                try:
+                    state_tensor = state_tensor.to(res.device)
+                    state_tensor = state_tensor.reshape(res.shape[0], -1)
+                except Exception:
+                    state_tensor = state_tensor.cpu().reshape(res.shape[0], -1).to(res.device)
+                if state_tensor.shape[0] == res.shape[0] and state_tensor.dim() == 2:
+                    res = torch.cat([res, state_tensor], dim=1)
+            return res
+
+        # Default behavior: concatenation across time. Pad/truncate to configured frames.
+        desired_T = max(1, int(self.frames))
         if Tp < desired_T:
             # repeat last frame as many times as needed
             last = res[:, -1:, ...]  # B x 1 x 64 x 16 x 16
@@ -186,6 +263,20 @@ class CustomCombinedExtractor(BaseFeaturesExtractor):
 
         # Final compression to feature vector
         res = self.compression_2_and_linear(res)
+
+        # res shape: (Bp, 256)
+        if state_tensor is not None:
+            try:
+                # move state to same device and flatten trailing dims
+                state_tensor = state_tensor.to(res.device)
+                state_tensor = state_tensor.reshape(res.shape[0], -1)
+            except Exception:
+                # fallback: try converting via cpu then to device
+                state_tensor = state_tensor.cpu().reshape(res.shape[0], -1).to(res.device)
+
+            # If dimension matches, concatenate; otherwise ignore state to avoid crashes
+            if state_tensor.shape[0] == res.shape[0] and state_tensor.dim() == 2:
+                res = torch.cat([res, state_tensor], dim=1)
 
         return res
 
@@ -251,22 +342,14 @@ class CustomNetwork(nn.Module):
 
         # Policy network
         self.policy_net = nn.Sequential(
-            # nn.Linear(feature_dim, 256),
-            # nn.LayerNorm((256)),
-            # nn.ReLU(),
-            nn.Linear(256, 64, bias=False),
+            nn.Linear(feature_dim, 64, bias=False),
             nn.LayerNorm(64),
-            # nn.ReLU(),
             nn.GELU(),
         )
         # Value network
         self.value_net = nn.Sequential(
-            # nn.Linear(feature_dim, 256, bias=False),
-            # nn.LayerNorm((256)),
-            # nn.ReLU(),
-            nn.Linear(256, 64, bias=False),
+            nn.Linear(feature_dim, 64, bias=False),
             nn.LayerNorm(64),
-            # nn.ReLU(),
             nn.GELU(),
         )
 

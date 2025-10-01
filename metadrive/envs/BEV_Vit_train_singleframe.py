@@ -30,26 +30,17 @@ except Exception:
             return True
 try:
     # Prefer relative import when used as a package: python -m envs.BEV_Vit
-    from .only_VIT import CustomViTPolicy
+    from only_VIT_singleframe import CustomViTPolicy
 except Exception:
     # Fallback for direct script execution: python envs\BEV_Vit.py
     try:
-        from only_VIT import CustomViTPolicy
+        from only_VIT_singleframe import CustomViTPolicy
     except Exception:
         # As a last resort, try importing using package-qualified name
-        from envs.only_VIT import CustomViTPolicy
+        from only_VIT_singleframe import CustomViTPolicy
 
 
-cfg = {
-    # "map": "SS",
-    "use_render": False,
-    "num_scenarios": 1,
-    "start_seed": 123,
-    "distance": 30,
-    "resolution_size": 224,
-    "traffic_density": 0.0,
-    "vehicle_config": {"show_navi_mark": True, "show_line_to_navi_mark": True},
-}
+
 
 def create_env(need_monitor=False):
     cfg = {

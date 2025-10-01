@@ -9,19 +9,31 @@ from stable_baselines3.common.callbacks import CheckpointCallback, CallbackList
 
 from metadrive.envs.top_down_env import TopDownMetaDrive
 from distance_and_collision_callback import MetaDriveMetricsCallback  # user callback
-from BEV_CNN import CustomBEVCNN  # feature extractor
+from envs.Multi_BEV_CNN import CustomBEVCNN  # feature extractor
+from sb3_contrib import RecurrentPPO
 
+
+cfg = {
+    "num_scenarios": 500,
+    "start_seed": 123,
+    "random_lane_width": True,
+    "random_lane_num": False,
+    "use_render": False,
+    "traffic_density": 0.0,
+    "traffic_mode": "hybrid",
+    "manual_control": False,
+    "controller": "keyboard",
+    "vehicle_config": {
+        "show_navi_mark": True,
+        "show_line_to_dest": False,
+        "show_line_to_navi_mark": True,
+    },
+    "distance": 30,
+    "resolution_size": 128,
+}
 
 def create_env(need_monitor=False):
-    env = TopDownMetaDrive(dict(
-        map="OO",
-        num_scenarios=200,
-        start_seed=500,
-        log_level=50,
-        random_lane_width=True,
-        random_lane_num=True,
-        use_render=False,
-    ))
+    env = TopDownMetaDrive(cfg)
     if need_monitor:
         env = Monitor(env)
     return env

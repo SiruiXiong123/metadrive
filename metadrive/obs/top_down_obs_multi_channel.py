@@ -20,6 +20,8 @@ from metadrive.component.road_network.node_road_network import NodeRoadNetwork
 from metadrive.component.navigation_module.node_network_navigation import NodeNetworkNavigation
 from metadrive.component.navigation_module.edge_network_navigation import EdgeNetworkNavigation
 from metadrive.component.navigation_module.trajectory_navigation import TrajectoryNavigation
+from metadrive.obs.state_obs import StateObservation
+import gymnasium as gym
 
 pygame = import_pygame()
 COLOR_WHITE = pygame.Color("white")
@@ -92,6 +94,9 @@ class TopDownMultiChannel(TopDownObservation):
         self.scaling = self.resolution[0] / max_distance
         assert self.scaling == self.resolution[1] / self.max_distance
 
+        # Placeholder for StateObservation; real instance will be created in reset
+        self.state_obs = None
+
     def init_obs_window(self):
         # ObservationWindowMultiChannel expects the list of channel names that will
         # be provided in canvas_dict when rendering. We use the CHANNEL_NAMES directly.
@@ -114,6 +119,24 @@ class TopDownMultiChannel(TopDownObservation):
         self.target_vehicle = vehicle
         self._should_draw_map = True
         self._should_fill_stack = True
+        # Create StateObservation here (use env.config when available so the helper
+        # sees the real vehicle_config and random_agent_model defaults).
+        try:
+            if getattr(env, "config", None) and isinstance(env.config, dict):
+                vehicle_cfg = env.config.get("vehicle_config", self.config)
+                random_agent = env.config.get("random_agent_model", False)
+            else:
+                vehicle_cfg = self.config
+                random_agent = False
+            state_cfg = dict(vehicle_config=vehicle_cfg, random_agent_model=random_agent)
+            self.state_obs = StateObservation(state_cfg)
+            try:
+                # Allow the StateObservation to receive reset info if it overrides reset
+                self.state_obs.reset(env, vehicle)
+            except Exception:
+                pass
+        except Exception:
+            self.state_obs = None
     
 
 
@@ -445,7 +468,14 @@ class TopDownMultiChannel(TopDownObservation):
             rgb = np.transpose(rgb, (1, 0, 2))
             if self.norm_pixel:
                 rgb = rgb.astype(np.float32) / 255.0
-            return rgb
+            # Build state observation
+            try:
+                state = self.state_obs.observe(vehicle) if getattr(self, 'state_obs', None) is not None else None
+            except Exception:
+                state = None
+            if state is None:
+                state = np.zeros((19,), dtype=np.float32)
+            return {"image": rgb, "state": state}
 
         # Gray scale
         img_dict = {k: self._transform(img) for k, img in img_dict.items()}
@@ -489,7 +519,18 @@ class TopDownMultiChannel(TopDownObservation):
             img = np.clip(img, 0, 1.0)
         else:
             img = np.clip(img, 0, 255)
-        return np.transpose(img, (1, 0, 2))
+
+        img = np.transpose(img, (1, 0, 2))
+
+        # Build state observation
+        try:
+            state = self.state_obs.observe(vehicle) if getattr(self, 'state_obs', None) is not None else None
+        except Exception:
+            state = None
+        if state is None:
+            state = np.zeros((19,), dtype=np.float32)
+
+        return {"image": img, "state": state}
 
     def draw_navigation_node(self, canvas, color=(255, 0, 0)): #color=(255, 0, 0)
         checkpoints = self.target_vehicle.navigation.checkpoints
@@ -517,20 +558,30 @@ class TopDownMultiChannel(TopDownObservation):
 
     @property
     def observation_space(self):
-        # If color mode is enabled, observation is HxWx3 RGB. Otherwise keep
-        # original stacked single-channel shape.
+        # Return a Dict observation space with keys:
+        #  - image: HxWx3 RGB (if debug_color True) or HxWxC stacked grayscale
+        #  - state: 1D state vector (from StateObservation)
+        # Build image space first
         if getattr(self, 'debug_color', False):
-            shape = self.obs_shape + (3,)
+            img_shape = self.obs_shape + (3,)
             if self.norm_pixel:
-                return gym.spaces.Box(0.0, 1.0, shape=shape, dtype=np.float32)
+                image_space = gym.spaces.Box(0.0, 1.0, shape=img_shape, dtype=np.float32)
             else:
-                return gym.spaces.Box(0, 255, shape=shape, dtype=np.uint8)
+                image_space = gym.spaces.Box(0, 255, shape=img_shape, dtype=np.uint8)
         else:
-            shape = self.obs_shape + (self.num_stacks, )
+            img_shape = self.obs_shape + (self.num_stacks, )
             if self.norm_pixel:
-                return gym.spaces.Box(-0.0, 1.0, shape=shape, dtype=np.float32)
+                image_space = gym.spaces.Box(-0.0, 1.0, shape=img_shape, dtype=np.float32)
             else:
-                return gym.spaces.Box(0, 255, shape=shape, dtype=np.uint8)
+                image_space = gym.spaces.Box(0, 255, shape=img_shape, dtype=np.uint8)
+
+        # Build state space from StateObservation if available, otherwise default to 19-dim [0,1]
+        if getattr(self, 'state_obs', None) is not None:
+            state_space = self.state_obs.observation_space
+        else:
+            state_space = gym.spaces.Box(0.0, 1.0, shape=(19,), dtype=np.float32)
+
+        return gym.spaces.Dict({"image": image_space, "state": state_space})
             
 # from collections import deque
 

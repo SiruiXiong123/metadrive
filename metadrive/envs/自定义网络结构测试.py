@@ -13,7 +13,7 @@ from stable_baselines3 import PPO
 from stable_baselines3.common.noise import NormalActionNoise, OrnsteinUhlenbeckActionNoise
 import random
 from metadrive.component.sensors.rgb_camera import RGBCamera
-from only_VIT import CustomViTPolicy
+from envs.only_VIT_singleframe import CustomViTPolicy
 
 random.seed(123)
 

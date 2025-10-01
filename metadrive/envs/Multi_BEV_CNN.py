@@ -17,6 +17,7 @@ class ImageNetBEVCNN(BaseFeaturesExtractor):
     This produces a (B, features_dim) tensor suitable for an LSTM input.
     """
     def __init__(self, observation_space: gym.spaces.Box, features_dim: int = 256):
+        # Pass final desired features_dim to BaseFeaturesExtractor so policy expects correct size
         super().__init__(observation_space, features_dim)
 
         # Support Dict observation_space that contains an 'image' key (our env returns {'image', 'state'})
@@ -42,8 +43,15 @@ class ImageNetBEVCNN(BaseFeaturesExtractor):
             raise AssertionError(f"observation_space has no 'shape' attribute: {observation_space}")
 
         if len(shape) == 3:
-            # shape can be (H,W,C) or (C,H,W). We'll handle both later; assume H,W,C by default
-            H, W, C = int(shape[0]), int(shape[1]), int(shape[2])
+            # shape can be (H,W,C) or (C,H,W). Detect common patterns:
+            # - channels-first (C,H,W) when shape[0] in {1,3}
+            # - channels-last  (H,W,C) when shape[2] in {1,3}
+            if int(shape[0]) in (1, 3):
+                # (C,H,W)
+                C, H, W = int(shape[0]), int(shape[1]), int(shape[2])
+            else:
+                # default to (H,W,C)
+                H, W, C = int(shape[0]), int(shape[1]), int(shape[2])
         elif len(shape) == 2:
             H, W, C = int(shape[0]), int(shape[1]), 1
         else:
@@ -73,13 +81,19 @@ class ImageNetBEVCNN(BaseFeaturesExtractor):
         # ensure this matches the 64*6*6 = 2304 expectation for 128x128 input
         self.n_flatten = n_flatten
 
+        # allocate image features dims as total_output_dim - state_dim
+        total_output_dim = int(features_dim)
+        image_features_dim = total_output_dim - int(self.state_dim or 0)
+        if image_features_dim <= 0:
+            raise AssertionError(f"features_dim={features_dim} is too small for state_dim={self.state_dim}")
+
         self.linear = nn.Sequential(
-            nn.Linear(n_flatten, features_dim),
+            nn.Linear(n_flatten, image_features_dim),
             nn.Tanh(),
         )
-        # expose dims for downstream use (avoid overriding BaseFeaturesExtractor internals)
-        self.image_features_dim = features_dim
-        self.output_dim = features_dim + (self.state_dim or 0)
+        # expose dims for downstream use
+        self.image_features_dim = image_features_dim
+        self.output_dim = total_output_dim
 
     def forward(self, observations: torch.Tensor) -> torch.Tensor:
         # Support dict observations: extract image and optional state
@@ -113,13 +127,20 @@ class ImageNetBEVCNN(BaseFeaturesExtractor):
                 observations = observations.float()
         observations = observations.clamp(0.0, 1.0)
 
-        # Accept either (B,H,W,C) or (B,C,H,W)
+        # Ensure we have a batch dimension: accept (H,W,C), (C,H,W) or batched variants
+        if observations.ndim == 3:
+            # add batch dim
+            observations = observations.unsqueeze(0)
+
+        # Now observations is expected to be (B,H,W,C) or (B,C,H,W)
         if observations.ndim == 4:
+            # channels-first case: (B,C,H,W)
             if observations.shape[1] == self.cnn[0].in_channels:
                 x = observations
+            # channels-last case: (B,H,W,C)
             elif observations.shape[-1] == self.cnn[0].in_channels:
-                # (B,H,W,C)
                 x = observations.permute(0, 3, 1, 2)
+            # single-channel -> repeat to 3 channels if cnn expects 3
             elif observations.shape[1] == 1 and self.cnn[0].in_channels == 3:
                 x = observations.repeat(1, 3, 1, 1)
             elif observations.shape[-1] == 1 and self.cnn[0].in_channels == 3:
@@ -131,7 +152,8 @@ class ImageNetBEVCNN(BaseFeaturesExtractor):
                 except Exception:
                     x = observations
         else:
-            x = observations
+            # if we somehow still don't have 4 dims, raise informative error
+            raise ValueError(f"Unexpected image tensor ndim={observations.ndim}; expected 3 or 4")
 
         feats = self.cnn(x)
         out = self.linear(feats)
@@ -147,6 +169,7 @@ class ImageNetBEVCNN(BaseFeaturesExtractor):
                     st = st.repeat(out.shape[0], 1)
                 else:
                     raise ValueError(f"Batch size mismatch between image features ({out.shape[0]}) and state ({st.shape[0]})")
+            # (diagnostic removed)
             st = st.float().to(device)
             combined = torch.cat([out, st], dim=1)
             return combined

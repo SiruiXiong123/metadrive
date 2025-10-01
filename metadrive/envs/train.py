@@ -11,7 +11,7 @@ from distance_and_collision_callback import MetaDriveMetricsCallback
 import os
 from metadrive.component.sensors.rgb_camera import RGBCamera
 from stable_baselines3.common.vec_env import DummyVecEnv
-from only_VIT import CustomViTPolicy
+from envs.only_VIT_singleframe import CustomViTPolicy
 
 
 

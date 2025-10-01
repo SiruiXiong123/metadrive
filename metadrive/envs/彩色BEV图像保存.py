@@ -25,7 +25,7 @@ if __name__ == '__main__':
         "use_render": False,
         "num_scenarios": 1,
         "start_seed": 123,
-        "distance": 30,
+        "distance": 50,
         "resolution_size": 224,
         "traffic_density": 0.0,
         "vehicle_config": {"show_navi_mark": True, "show_line_to_navi_mark": True},
@@ -36,8 +36,6 @@ if __name__ == '__main__':
         obs, _ = env.reset()
         # enable debug color on the per-agent observation object
         obs_obj = env.observations[DEFAULT_AGENT]
-        if hasattr(obs_obj, 'debug_color'):
-            obs_obj.debug_color = True
         # render one step to ensure surfaces ready
         obs, _ = env.reset()
         img = obs if not isinstance(obs, dict) else obs.get('image', obs)
@@ -54,3 +52,5 @@ if __name__ == '__main__':
         print('[OK] Saved figures/彩色_bev_frame.png')
     finally:
         env.close()
+
+
