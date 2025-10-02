@@ -105,8 +105,9 @@ class CustomCombinedExtractor(BaseFeaturesExtractor):
             nn.ELU(),
         )
         self.compression_2_and_linear = self.compression_2_and_linear.to(self.device)
-        # Update the features dim manually (ViT features 256 + optional state dim)
-        self._features_dim = 256 + max(0, int(self.state_dim))
+        # Keep features dim fixed to ViT output (256).
+        # State concatenation disabled — we only use ViT-extracted features.
+        self._features_dim = 256
         # self.embedding_compression_2 = nn.Conv2d(
         #     in_channels=64 * 4, out_channels=32, kernel_size=3, stride=1, bias=False
         # )
@@ -234,15 +235,16 @@ class CustomCombinedExtractor(BaseFeaturesExtractor):
             res = res.mean(dim=1)  # B x 64 x 16 x 16
             # compression_2_and_linear expects in_channels=64 in this mode
             res = self.compression_2_and_linear(res)
-            # attach state if present (same logic as after final compression)
-            if state_tensor is not None:
-                try:
-                    state_tensor = state_tensor.to(res.device)
-                    state_tensor = state_tensor.reshape(res.shape[0], -1)
-                except Exception:
-                    state_tensor = state_tensor.cpu().reshape(res.shape[0], -1).to(res.device)
-                if state_tensor.shape[0] == res.shape[0] and state_tensor.dim() == 2:
-                    res = torch.cat([res, state_tensor], dim=1)
+            # State concatenation disabled. If you want to re-enable, remove these comments
+            # and ensure self._features_dim matches 256 + state_dim.
+            # if state_tensor is not None:
+            #     try:
+            #         state_tensor = state_tensor.to(res.device)
+            #         state_tensor = state_tensor.reshape(res.shape[0], -1)
+            #     except Exception:
+            #         state_tensor = state_tensor.cpu().reshape(res.shape[0], -1).to(res.device)
+            #     if state_tensor.shape[0] == res.shape[0] and state_tensor.dim() == 2:
+            #         res = torch.cat([res, state_tensor], dim=1)
             return res
 
         # Default behavior: concatenation across time. Pad/truncate to configured frames.
@@ -265,18 +267,15 @@ class CustomCombinedExtractor(BaseFeaturesExtractor):
         res = self.compression_2_and_linear(res)
 
         # res shape: (Bp, 256)
-        if state_tensor is not None:
-            try:
-                # move state to same device and flatten trailing dims
-                state_tensor = state_tensor.to(res.device)
-                state_tensor = state_tensor.reshape(res.shape[0], -1)
-            except Exception:
-                # fallback: try converting via cpu then to device
-                state_tensor = state_tensor.cpu().reshape(res.shape[0], -1).to(res.device)
-
-            # If dimension matches, concatenate; otherwise ignore state to avoid crashes
-            if state_tensor.shape[0] == res.shape[0] and state_tensor.dim() == 2:
-                res = torch.cat([res, state_tensor], dim=1)
+        # State concatenation disabled for the same reason as above.
+        # if state_tensor is not None:
+        #     try:
+        #         state_tensor = state_tensor.to(res.device)
+        #         state_tensor = state_tensor.reshape(res.shape[0], -1)
+        #     except Exception:
+        #         state_tensor = state_tensor.cpu().reshape(res.shape[0], -1).to(res.device)
+        #     if state_tensor.shape[0] == res.shape[0] and state_tensor.dim() == 2:
+        #         res = torch.cat([res, state_tensor], dim=1)
 
         return res
 

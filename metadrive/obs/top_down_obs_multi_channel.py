@@ -94,6 +94,11 @@ class TopDownMultiChannel(TopDownObservation):
         self.scaling = self.resolution[0] / max_distance
         assert self.scaling == self.resolution[1] / self.max_distance
 
+        # Camera forward offset in meters relative to ego (ego-frame).
+        # Positive means place camera in front of ego, which makes the ego appear lower
+        # in the rendered BEV. Default 8.0m as requested.
+        self.camera_forward_m = 10.0
+
         # Placeholder for StateObservation; real instance will be created in reset
         self.state_obs = None
 
@@ -253,8 +258,24 @@ class TopDownMultiChannel(TopDownObservation):
         # Set the active area that can be modify to accelerate
         assert len(self.engine.agents) == 1, "Don't support multi-agent top-down observation yet!"
         vehicle = self.engine.agents[DEFAULT_AGENT]
-        pos = self.canvas_runtime.pos2pix(*vehicle.position)
-        # print("Ego position (world coords):", vehicle.position, "-> (pix coords):", pos)
+        # Compute camera center as ego + forward offset (in ego local frame).
+        # This keeps the BEV camera ahead of the vehicle so the ego appears lower
+        # on the image and more road ahead is visible.
+        try:
+            forward_m = float(getattr(self, "camera_forward_m", 8.0))
+        except Exception:
+            forward_m = 8.0
+
+        # local offset in ego frame: (forward, lateral_right)
+        local_forward = forward_m
+        local_lateral = 0.0
+        heading = vehicle.heading_theta
+        # rotate local offset to world coordinates
+        world_dx = local_forward * math.cos(heading) - local_lateral * math.sin(heading)
+        world_dy = local_forward * math.sin(heading) + local_lateral * math.cos(heading)
+        camera_world = (vehicle.position[0] + world_dx, vehicle.position[1] + world_dy)
+        pos = self.canvas_runtime.pos2pix(*camera_world)
+        # print("Camera world (world coords):", camera_world, "-> (pix coords):", pos)
 
         clip_size = (int(self.obs_window.get_size()[0] * 1.1), int(self.obs_window.get_size()[0] * 1.1))
 

@@ -14,8 +14,9 @@ from metadrive.envs.top_down_env import TopDownMetaDrive
 
 # Match cfg from LSTM(CNN).py so the observation the agent saw is similar
 cfg = {
-    "num_scenarios": 500,
-    "start_seed": 123,
+    "map": "OO",
+    # "num_scenarios": 500,
+    # "start_seed": 123,
     "random_lane_width": True,
     "random_lane_num": False,
     "use_render": False,
@@ -28,7 +29,7 @@ cfg = {
         "show_line_to_dest": False,
         "show_line_to_navi_mark": True,
     },
-    "distance": 40,
+    "distance": 30,
     "resolution_size": 224,
 }
 

@@ -25,8 +25,8 @@ if __name__ == '__main__':
         "use_render": False,
         "num_scenarios": 1,
         "start_seed": 123,
-        "distance": 50,
-        "resolution_size": 224,
+        "distance": 40,
+        "resolution_size": 128,
         "traffic_density": 0.0,
         "vehicle_config": {"show_navi_mark": True, "show_line_to_navi_mark": True},
     }
@@ -45,7 +45,7 @@ if __name__ == '__main__':
         plt.figure(figsize=(6, 6))
         plt.imshow(bev)
         plt.axis('off')
-        plt.title('Color BEV (debug_color=True)')
+        # plt.title('Color BEV (debug_color=True)')
         os.makedirs('figures', exist_ok=True)
         plt.savefig('figures/彩色_bev_frame.png', dpi=200, bbox_inches='tight')
         plt.show()

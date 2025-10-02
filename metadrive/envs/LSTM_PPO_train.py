@@ -66,11 +66,11 @@ def main():
 
     # ✅ LSTM PPO 策略参数
     policy_kwargs = dict(
-        features_extractor_class=ImageNetBEVCNN,          # 你的特征提取器
+        features_extractor_class=ImageNetBEVCNN,          #
         # extractor returns image features (256) + state (19) = 275, make LSTM expect the full vector
-        features_extractor_kwargs=dict(features_dim=275), # CNN输出长度（拼接后=275）
-        normalize_images=False,                        # 已在提取器中归一化
-        lstm_hidden_size=256,                          # LSTM 隐藏层维度
+        features_extractor_kwargs=dict(features_dim=275), 
+        normalize_images=False,                        
+        lstm_hidden_size=256,                          
         n_lstm_layers=1,
         shared_lstm=False,
     )
