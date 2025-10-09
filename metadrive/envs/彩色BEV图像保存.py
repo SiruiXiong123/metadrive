@@ -25,7 +25,7 @@ if __name__ == '__main__':
         "use_render": False,
         "num_scenarios": 1,
         "start_seed": 123,
-        "distance": 40,
+        "distance": 25,
         "resolution_size": 128,
         "traffic_density": 0.0,
         "vehicle_config": {"show_navi_mark": True, "show_line_to_navi_mark": True},

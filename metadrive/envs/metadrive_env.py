@@ -280,18 +280,65 @@ class MetaDriveEnv(BaseEnv):
         sigma = 3
 
         reward = 0.0
-        ckpt_reward = math.exp(- (dist_m / sigma) ** 2)
-        if vehicle.speed_km_h / vehicle.max_speed_km_h>0.05:
-            reward += ckpt_reward
-        else:
-            reward += 0
-        # print('ckpt_reward:', ckpt_reward)
-        reward += self.config["driving_reward"] * (long_now - long_last) * lateral_factor * positive_road
-        reward += self.config["speed_reward"] * (vehicle.speed_km_h / vehicle.max_speed_km_h) * positive_road
 
+
+
+
+
+
+
+
+        # ckpt_reward = math.exp(- (dist_m / sigma) ** 2)
+        # if vehicle.speed_km_h / vehicle.max_speed_km_h>0.05:
+        #     reward += ckpt_reward
+        # else:
+        #     reward += 0
+        # print('ckpt_reward:', ckpt_reward)
+        current_reference_lane = vehicle.lane
+
+        heading_diff = vehicle.heading_diff(current_reference_lane)
+        heading_reward = 0.15 * (1.0 / (abs(0.5 - heading_diff) + 1.0))
+        # print('heading_diff:', heading_diff)
+        v_t = vehicle.speed_km_h
+        v_d = 80
+        R_speed = 1.0 * (1.0 / ((abs(v_t - v_d) / v_d) + 1.0))
+
+        #------------smooth reward----------------
+        steering_last = clip((vehicle.last_current_action[1][0] + 1) / 2, 0.0, 1.0)
+        steering_now = clip((vehicle.steering / vehicle.MAX_STEERING + 1) / 2, 0.0, 1.0)
+        delta_steer = abs(steering_now - steering_last)
+        R_smooth = 0.05 * (1.0 - delta_steer)
+        R_smooth = max(R_smooth, 0.0)
+        reward += R_smooth
+
+        #-------------out of road penalty----------------
+        dleft = vehicle.dist_to_left_side        # 左侧到道路边界的距离
+        dright = vehicle.dist_to_right_side      # 右侧到道路边界的距离
+        W = vehicle.WIDTH                        # 车辆宽度
+        Wlane = vehicle.navigation.get_current_lane_width()  # 当前车道宽度
+        # print('左侧距离:', dleft, '右侧距离:', dright, '车辆宽度:', W, '车道宽度:', Wlane)
+        if dleft < 0.5 * Wlane:
+            P_left = 1 / (((dleft - 0.5 * W) / (0.5 * Wlane)) ** 2 + 1.0)
+        else:
+            P_left = 0.0
+
+        # 计算右侧风险
+        if dright < 0.5 * Wlane:
+            P_right = 1 / (((dright - 0.5 * W) / (0.5 * Wlane)) ** 2 + 1.0)
+        else:
+            P_right = 0.0
+
+        # 计算越界惩罚
+        R_out_of_road = -3 * (P_left + P_right)
+
+        reward += self.config["driving_reward"] * (long_now - long_last) * lateral_factor * positive_road
+        reward += R_speed
+        reward += heading_reward
+        reward += R_out_of_road
         step_info["step_reward"] = reward
-        print('step_reward:', reward)
-        
+        # print('step_reward:', reward)
+        # print('出界惩罚:', R_out_of_road)
+
         if self._is_arrive_destination(vehicle):
             reward = +self.config["success_reward"]
         elif self._is_out_of_road(vehicle):

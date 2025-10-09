@@ -97,7 +97,7 @@ class TopDownMultiChannel(TopDownObservation):
         # Camera forward offset in meters relative to ego (ego-frame).
         # Positive means place camera in front of ego, which makes the ego appear lower
         # in the rendered BEV. Default 8.0m as requested.
-        self.camera_forward_m = 10.0
+        self.camera_forward_m = 15.0
 
         # Placeholder for StateObservation; real instance will be created in reset
         self.state_obs = None

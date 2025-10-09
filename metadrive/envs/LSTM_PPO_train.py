@@ -29,7 +29,7 @@ cfg = {
         "show_line_to_dest": False,
         "show_line_to_navi_mark": True,
     },
-    "distance": 30,
+    "distance": 20,
     "resolution_size": 128,
 }
 
