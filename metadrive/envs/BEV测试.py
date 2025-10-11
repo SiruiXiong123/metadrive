@@ -50,13 +50,12 @@ if __name__ == '__main__':
         return DummyVecEnv([_env_fn])
 
     env = create_env_for_testing()
-    
+
     # ✅ 模型路径检查和设置
     # 方案1：如果模型在工作区外部
-    external_model_path = r"C:\Users\37945\OneDrive\Desktop\1. 有无奖励函数对比\有奖励函数\recurrent_ppo_mlp_final"
-    
+    external_model_path = r"C:\Users\37945\OneDrive\Desktop\2.stage2奖励函数修改\base+ckpt\rl_model_400000_steps"
     # 方案2：检查工作区内的模型
-    internal_model_path = os.path.join(os.getcwd(), "agent_model", "BEV_MlpLstmPolicy", "recurrent_ppo_mlp_final")
+    #internal_model_path = os.path.join(os.getcwd(), "agent_model", "BEV_MlpLstmPolicy", "recurrent_ppo_mlp_final")
     
     # 检查哪个路径存在
     if os.path.exists(external_model_path + ".zip"):

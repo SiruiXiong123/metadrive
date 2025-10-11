@@ -400,6 +400,25 @@ class TopDownMultiChannel(TopDownObservation):
             # navigation not present or not ready; skip gracefully
             pass
 
+        # Draw other vehicles on the road_lines surface for RGB visualization
+        try:
+            for v in self.engine.get_objects(lambda o: isinstance(o, BaseVehicle) or isinstance(o, BaseTrafficParticipant)).values():
+                if v is vehicle:
+                    continue
+                h = v.heading_theta
+                h = h if abs(h) > 2 * np.pi / 180 else 0
+                # Draw other vehicles as black rectangles on road_lines surface
+                ObjectGraphics.display(
+                    object=v,
+                    surface=road_lines_for_scene,
+                    color=(0, 0, 0),  # Black color for other vehicles
+                    heading=h,
+                    draw_contour=True,
+                    contour_width=1,
+                )
+        except Exception:
+            pass
+
         # Now render the observation windows using the possibly-updated road_lines surface
         # Draw ego/world vehicle position onto the road_lines copy so it appears in channel 1
         try:
@@ -455,6 +474,14 @@ class TopDownMultiChannel(TopDownObservation):
         return img
 
     def observe(self, vehicle: BaseVehicle):
+        # 在每次观察时检查智能体是否在可行域内
+        try:
+            is_in_drivable = self.check_agent_in_drivable_area(vehicle)
+            # 额外打印一行简化信息
+            print(f"[BEV检查] 智能体在可行域内: {is_in_drivable}")
+        except Exception as e:
+            print(f"[BEV检查] 检查时出错: {e}")
+        
         self.render()
         surface_dict = self.get_observation_window()
         # road_network and road_lines are larger internal surfaces; ensure they are scaled to observation resolution
@@ -568,6 +595,57 @@ class TopDownMultiChannel(TopDownObservation):
     def draw_navigation_trajectory(self, canvas, color=(255, 0, 0)): #color=(255, 0, 0)
         lane = PointLane(self.target_vehicle.navigation.checkpoints, DEFAULT_TRAJECTORY_LANE_WIDTH)
         LaneGraphics.draw_drivable_area(lane, canvas, color=color)
+
+    def check_agent_in_drivable_area(self, vehicle):
+        """
+        通过检查BEV图像中智能体位置的像素颜色来判断是否在可行域内
+        
+        Args:
+            vehicle: 智能体车辆对象
+            
+        Returns:
+            bool: True if in drivable area, False if outside drivable area
+        """
+        try:
+            # 获取车辆在世界坐标系中的位置
+            vehicle_pos = vehicle.position
+            
+            # 将世界坐标转换为画布像素坐标
+            canvas_pix = self.canvas_background.vec2pix([vehicle_pos[0], vehicle_pos[1]])
+            x, y = int(round(canvas_pix[0])), int(round(canvas_pix[1]))
+            
+            # 检查像素坐标是否在画布范围内
+            canvas_size = self.canvas_background.get_size()
+            if 0 <= x < canvas_size[0] and 0 <= y < canvas_size[1]:
+                # 获取该位置的像素颜色
+                try:
+                    pixel_color = self.canvas_background.get_at((x, y))
+                    # 将pygame.Color转换为RGB元组
+                    rgb = (pixel_color.r, pixel_color.g, pixel_color.b)
+                    
+                    # 白色背景表示非可行域，有颜色的区域表示可行域
+                    # 白色像素值通常是(255, 255, 255)
+                    is_white_background = (rgb[0] > 240 and rgb[1] > 240 and rgb[2] > 240)
+                    is_in_drivable = not is_white_background
+                    
+                    # 打印调试信息
+                    print(f"智能体位置: ({vehicle_pos[0]:.2f}, {vehicle_pos[1]:.2f})")
+                    print(f"画布像素坐标: ({x}, {y})")
+                    print(f"像素颜色: {rgb}")
+                    print(f"是否在可行域内: {is_in_drivable}")
+                    
+                    return is_in_drivable
+                    
+                except Exception as e:
+                    print(f"获取像素颜色时出错: {e}")
+                    return True  # 默认认为在可行域内
+            else:
+                print(f"智能体位置超出画布范围: ({x}, {y}), 画布大小: {canvas_size}")
+                return False  # 超出画布范围认为不在可行域内
+                
+        except Exception as e:
+            # print(f"检查可行域时出错: {e}")
+            return True  # 出错时默认认为在可行域内
 
     def _get_stack_indices(self, length, frame_skip=None):
         frame_skip = frame_skip or self.frame_skip

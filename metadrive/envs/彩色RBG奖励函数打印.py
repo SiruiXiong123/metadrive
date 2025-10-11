@@ -54,13 +54,13 @@ def make_output_path(base_dir='recordings'):
 
 def main():
     cfg = {
-        "map": "OO",
+        "map": "SS",
         # "num_scenarios": 500,
         # "start_seed": 123,
         "random_lane_width": True,
         "random_lane_num": False,
         "use_render": True,
-        "traffic_density": 0.0,
+        "traffic_density": 0.1,
         "traffic_mode": "hybrid",
         "manual_control": True,
         "controller": "keyboard",
@@ -69,8 +69,8 @@ def main():
             "show_line_to_dest": False,
             "show_line_to_navi_mark": True,
         },
-        "distance": 30,
-        "resolution_size": 224,
+        "distance": 20,
+        "resolution_size": 128,
     }
 
     env = TopDownMetaDrive(cfg)
