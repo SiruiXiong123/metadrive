@@ -50,12 +50,26 @@ def write_with_cv2(frames, out_path, fps=15):
         return False, e
 
 
-def find_latest_npz(pattern='recordings/彩色RBG_reward_*.npz'):
-    files = glob.glob(pattern)
-    if not files:
+def find_latest_npz(patterns=None):
+    if patterns is None:
+        patterns = [
+            'recordings/BEV测试_录制_*.npz',
+            'recordings/彩色RBG_reward_*.npz',
+            'recordings/*.npz'  # 备用模式，匹配所有npz文件
+        ]
+    
+    all_files = []
+    for pattern in patterns:
+        files = glob.glob(pattern)
+        all_files.extend(files)
+    
+    if not all_files:
         return None
-    files.sort(key=os.path.getmtime, reverse=True)
-    return files[0]
+    
+    # 去除重复文件并按修改时间排序
+    all_files = list(set(all_files))
+    all_files.sort(key=os.path.getmtime, reverse=True)
+    return all_files[0]
 
 
 def load_npz(path):
@@ -83,13 +97,14 @@ def load_npz(path):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('npz', nargs='?', help='Path to npz file (default: latest recordings/彩色RBG_reward_*.npz)')
+    parser.add_argument('npz', nargs='?', help='Path to npz file (default: latest from recordings/)')
     parser.add_argument('--fps', type=int, default=15, help='Output FPS')
     args = parser.parse_args()
 
     npz_path = args.npz or find_latest_npz()
     if npz_path is None or not os.path.exists(npz_path):
-        print('No npz file found. Please specify path or ensure recordings/彩色RBG_reward_*.npz exists')
+        print('No npz file found. Please specify path or ensure recordings/ contains .npz files')
+        print('Supported patterns: BEV测试_录制_*.npz, 彩色RBG_reward_*.npz')
         sys.exit(1)
 
     print('Loading', npz_path)

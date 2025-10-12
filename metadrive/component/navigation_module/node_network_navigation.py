@@ -371,3 +371,59 @@ class NodeNetworkNavigation(BaseNavigation):
     def route_completion(self):
         """Return the route completion at this moment."""
         return self.travelled_length / self.total_length
+
+    def is_on_recommended_path(self, vehicle, lateral_tolerance=2.0):
+        """
+        判断智能体是否在推荐路径上（改进版本，考虑横向偏移）
+        
+        Args:
+            vehicle: 智能体车辆对象
+            lateral_tolerance: 横向容忍距离（米），超过此距离认为偏离推荐路径
+            
+        Returns:
+            bool: True if vehicle is on recommended path, False otherwise
+        """
+        try:
+            # 获取车辆当前所在的车道
+            current_lane = vehicle.lane
+            
+            # 首先检查是否在推荐车道范围内
+            is_in_recommended_lanes = False
+            target_lane = None
+            
+            if current_lane in self.current_ref_lanes:
+                is_in_recommended_lanes = True
+                target_lane = current_lane
+            elif self.next_ref_lanes is not None and current_lane in self.next_ref_lanes:
+                is_in_recommended_lanes = True
+                target_lane = current_lane
+            
+            # 如果不在推荐车道内，直接返回False
+            if not is_in_recommended_lanes:
+                return False
+            
+            # 进一步检查横向偏移是否在容忍范围内
+            try:
+                # 获取车辆在车道坐标系中的位置
+                longitudinal, lateral = target_lane.local_coordinates(vehicle.position)
+                
+                # 检查横向偏移是否超过容忍度
+                abs_lateral = abs(lateral)
+                lane_half_width = target_lane.width / 2
+                
+                # 如果横向偏移超过车道宽度的一半 + 容忍距离，认为偏离
+                max_allowed_lateral = min(lane_half_width + lateral_tolerance, lane_half_width * 1.5)
+                
+                if abs_lateral > max_allowed_lateral:
+                    return False
+                
+                return True
+                
+            except Exception:
+                # 如果无法计算横向偏移，回退到原始方法
+                return is_in_recommended_lanes
+            
+        except Exception as e:
+            # 如果出现任何错误，默认返回 False
+            # print(f"Error checking recommended path: {e}")  # 静默处理错误
+            return False

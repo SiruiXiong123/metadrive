@@ -280,3 +280,20 @@ class BaseNavigation:
     @classmethod
     def get_navigation_info_dim(cls):
         return cls.NUM_WAY_POINT * cls.CHECK_POINT_INFO_DIM
+
+    def is_on_recommended_path(self, vehicle, lateral_tolerance=2.0):
+        """
+        判断智能体是否在推荐路径上
+        
+        这是基类的默认实现，子类应该重写此方法提供具体实现
+        
+        Args:
+            vehicle: 智能体车辆对象
+            lateral_tolerance: 横向容忍距离（米）
+            
+        Returns:
+            bool: True if vehicle is on recommended path, False otherwise
+        """
+        # 基类默认实现：如果没有被子类重写，返回 True（保守策略）
+        # print("Warning: is_on_recommended_path not implemented for this navigation type")  # 静默警告
+        return True

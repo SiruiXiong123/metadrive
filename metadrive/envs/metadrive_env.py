@@ -333,6 +333,17 @@ class MetaDriveEnv(BaseEnv):
         # 计算越界惩罚
         R_out_of_road = -3 * (P_left + P_right)
 
+        is_on_path = vehicle.navigation.is_on_recommended_path(vehicle)
+
+        # 静默检测推荐路径状态（不打印）
+        if is_on_path and vehicle.speed_km_h / vehicle.max_speed_km_h>0.05:
+            reward += 0.5
+            # print("✅ 智能体在推荐路径上")
+        else:
+            reward += -1
+            # print("❌ 智能体偏离了推荐路径")
+
+
         #加入view points奖励
         reward += self.config["driving_reward"] * (long_now - long_last) * lateral_factor * positive_road
         reward += self.config["speed_reward"] * (vehicle.speed_km_h / vehicle.max_speed_km_h) * positive_road

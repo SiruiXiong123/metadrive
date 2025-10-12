@@ -234,3 +234,44 @@ class TrajectoryNavigation(BaseNavigation):
     @property
     def current_heading_theta_at_long(self):
         return self.last_current_heading_theta_at_long[1]
+
+    def is_on_recommended_path(self, vehicle, lateral_tolerance=2.0):
+        """
+        判断智能体是否在推荐路径（轨迹）上
+        
+        对于轨迹导航，我们通过检查车辆与轨迹的横向距离来判断
+        
+        Args:
+            vehicle: 智能体车辆对象
+            lateral_tolerance: 横向容忍距离（米），对轨迹导航作为距离阈值使用
+            
+        Returns:
+            bool: True if vehicle is on recommended trajectory, False otherwise
+        """
+        try:
+            # 获取车辆当前位置
+            vehicle_pos = vehicle.position
+            
+            # 如果没有参考轨迹，返回 False
+            if self.checkpoints is None or len(self.checkpoints) < 2:
+                return False
+            
+            # 计算车辆与轨迹的最小距离
+            min_distance = float('inf')
+            trajectory_points = np.array(self.checkpoints)
+            
+            # 遍历轨迹上的每个点，找到最近距离
+            for point in trajectory_points:
+                distance = np.linalg.norm(vehicle_pos[:2] - point[:2])  # 只考虑 x, y 坐标
+                min_distance = min(min_distance, distance)
+            
+            # 使用提供的横向容忍距离作为阈值
+            distance_threshold = lateral_tolerance
+            
+            # 如果车辆距离轨迹的最小距离小于阈值，认为在推荐路径上
+            return min_distance <= distance_threshold
+            
+        except Exception as e:
+            # 如果出现任何错误，默认返回 False
+            # print(f"Error checking recommended trajectory: {e}")  # 静默处理错误
+            return False
