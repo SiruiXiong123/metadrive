@@ -36,6 +36,7 @@ class ImageNetBEVCNN(BaseFeaturesExtractor):
                     self.state_dim = int(getattr(s, 'shape', (0,))[0])
                 except Exception:
                     self.state_dim = 0
+                print(f"[DIAG] Detected state_dim from observation_space: {self.state_dim}")
             shape = getattr(image_space, 'shape', None)
         else:
             shape = getattr(observation_space, "shape", None)
@@ -94,6 +95,12 @@ class ImageNetBEVCNN(BaseFeaturesExtractor):
         # expose dims for downstream use
         self.image_features_dim = image_features_dim
         self.output_dim = total_output_dim
+        
+        # 添加详细的调试信息
+        print(f"[CNN DIAG] CNN flatten size: {n_flatten}")
+        print(f"[CNN DIAG] Image features dim: {image_features_dim}")
+        print(f"[CNN DIAG] State dim: {self.state_dim}")
+        print(f"[CNN DIAG] Total output dim: {total_output_dim}")
 
     def forward(self, observations: torch.Tensor) -> torch.Tensor:
         # Support dict observations: extract image and optional state
@@ -157,6 +164,9 @@ class ImageNetBEVCNN(BaseFeaturesExtractor):
 
         feats = self.cnn(x)
         out = self.linear(feats)
+        print(f"[FORWARD DIAG] Image tensor shape: {x.shape}")
+        print(f"[FORWARD DIAG] CNN features shape: {feats.shape}")
+        print(f"[FORWARD DIAG] Linear output shape: {out.shape}")
 
         # If original dict contained a state vector, concat it
         if orig_state is not None:
@@ -169,9 +179,11 @@ class ImageNetBEVCNN(BaseFeaturesExtractor):
                     st = st.repeat(out.shape[0], 1)
                 else:
                     raise ValueError(f"Batch size mismatch between image features ({out.shape[0]}) and state ({st.shape[0]})")
-            # (diagnostic removed)
             st = st.float().to(device)
+            print(f"[FORWARD DIAG] State tensor shape: {st.shape}")
             combined = torch.cat([out, st], dim=1)
+            print(f"[FORWARD DIAG] Combined output shape: {combined.shape}")
             return combined
 
+        print(f"[FORWARD DIAG] Final output shape (no state): {out.shape}")
         return out

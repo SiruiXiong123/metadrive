@@ -178,10 +178,11 @@ class LidarStateObservation(BaseObservation):
         if self.config["vehicle_config"]["lidar"]["num_lasers"] > 0 and self.config["vehicle_config"]["lidar"][
                 "distance"] > 0:
             # Number of lidar rays and distance should be positive!
-            lidar_dim = self.config["vehicle_config"]["lidar"][
-                "num_lasers"] + self.config["vehicle_config"]["lidar"]["num_others"] * 4
+            # 注释掉激光雷达点云维度，只保留其他车辆信息
+            # 现在每个车辆包含：位置(2) + 速度(2) + 长宽(2) = 6维基础信息
+            lidar_dim = self.config["vehicle_config"]["lidar"]["num_others"] * 6  # 移除了 num_lasers 维度，增加了长宽信息
             if self.config["vehicle_config"]["lidar"]["add_others_navi"]:
-                lidar_dim += self.config["vehicle_config"]["lidar"]["num_others"] * 4
+                lidar_dim += self.config["vehicle_config"]["lidar"]["num_others"] * 4  # 导航信息还是4维
             shape[0] += lidar_dim
         return gym.spaces.Box(-0.0, 1.0, shape=tuple(shape), dtype=np.float32)
 
@@ -194,7 +195,9 @@ class LidarStateObservation(BaseObservation):
                               Projection of distance between ego and another vehicle on ego vehicle's side direction,
                               Projection of speed between ego and another vehicle on ego vehicle's heading direction,
                               Projection of speed between ego and another vehicle on ego vehicle's side direction,
-                              ] * 4, dim = 16
+                              Length of the other vehicle (normalized),
+                              Width of the other vehicle (normalized),
+                              ] * 4, dim = 24
 
         Lidar points: 240 lidar points surrounding vehicle, starting from the vehicle head in clockwise direction
 
@@ -225,11 +228,12 @@ class LidarStateObservation(BaseObservation):
                     vehicle, detected_objects, vehicle.config["lidar"]["distance"],
                     vehicle.config["lidar"]["num_others"], vehicle.config["lidar"]["add_others_navi"]
                 )
-            other_v_info += self._add_noise_to_cloud_points(
-                cloud_points,
-                gaussian_noise=vehicle.config["lidar"]["gaussian_noise"],
-                dropout_prob=vehicle.config["lidar"]["dropout_prob"]
-            )
+            # 注释掉激光雷达点云，不返回点云数据
+            # other_v_info += self._add_noise_to_cloud_points(
+            #     cloud_points,
+            #     gaussian_noise=vehicle.config["lidar"]["gaussian_noise"],
+            #     dropout_prob=vehicle.config["lidar"]["dropout_prob"]
+            # )
             self.cloud_points = cloud_points
             self.detected_objects = detected_objects
         return other_v_info

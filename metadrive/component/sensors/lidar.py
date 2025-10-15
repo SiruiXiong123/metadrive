@@ -116,6 +116,16 @@ class Lidar(DistanceDetector):
                 res.append(clip((relative_velocity[0] / ego_vehicle.max_speed_km_h + 1) / 2, 0.0, 1.0))
                 res.append(clip((relative_velocity[1] / ego_vehicle.max_speed_km_h + 1) / 2, 0.0, 1.0))
 
+                # 添加其他车辆的长宽信息
+                vehicle_length = getattr(vehicle, 'LENGTH', ego_vehicle.LENGTH)  # 获取车辆长度，如果没有则使用自车长度
+                vehicle_width = getattr(vehicle, 'WIDTH', ego_vehicle.WIDTH)    # 获取车辆宽度，如果没有则使用自车宽度
+                
+                # 标准化长宽信息到[0,1]范围
+                max_length = getattr(ego_vehicle, 'MAX_LENGTH', 10.0)  # 假设最大长度为10米
+                max_width = getattr(ego_vehicle, 'MAX_WIDTH', 5.0)     # 假设最大宽度为5米
+                res.append(clip(vehicle_length / max_length, 0.0, 1.0))
+                res.append(clip(vehicle_width / max_width, 0.0, 1.0))
+
                 if add_others_navi:
                     ckpt1, ckpt2 = vehicle.navigation.get_checkpoints()
 
@@ -130,9 +140,9 @@ class Lidar(DistanceDetector):
             else:
 
                 if add_others_navi:
-                    res += [0.0] * 8
+                    res += [0.0] * 10  # 位置(2) + 速度(2) + 长宽(2) + 导航(4) = 10
                 else:
-                    res += [0.0] * 4
+                    res += [0.0] * 6   # 位置(2) + 速度(2) + 长宽(2) = 6
 
         return res
 

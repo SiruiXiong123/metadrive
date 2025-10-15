@@ -20,11 +20,17 @@ cfg = {
     "random_lane_width": True,
     "random_lane_num": False,
     "use_render": False,
-    "traffic_density": 0.0,
+    "traffic_density": 0.1,
     "traffic_mode": "hybrid",
     "manual_control": False,
     "controller": "keyboard",
     "vehicle_config": {
+        "lidar": {
+                "num_lasers": 120,  # 激光束数量
+                "distance": 50,     # 探测距离
+                "num_others": 4,    # 检测其他车辆数量
+                "add_others_navi": False  # 是否包含其他车辆导航信息
+        },
         "show_navi_mark": True,
         "show_line_to_dest": False,
         "show_line_to_navi_mark": True,
@@ -66,9 +72,9 @@ def main():
 
     # ✅ LSTM PPO 策略参数
     policy_kwargs = dict(
-        features_extractor_class=ImageNetBEVCNN,          #
-        # extractor returns image features (256) + state (19) = 275, make LSTM expect the full vector
-        features_extractor_kwargs=dict(features_dim=275), 
+        features_extractor_class=ImageNetBEVCNN,          
+        # extractor returns image features (256) + state (43) = 299, make LSTM expect the full vector
+        features_extractor_kwargs=dict(features_dim=299), 
         normalize_images=False,                        
         lstm_hidden_size=256,                          
         n_lstm_layers=1,

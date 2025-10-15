@@ -4,6 +4,25 @@ from typing import Union
 
 import numpy as np
 import math
+import os
+import sys
+
+# 添加TTC和EPF模块的导入
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+try:
+    from ttc_simple import calculate_ttc_collision_risk
+    TTC_AVAILABLE = True
+except ImportError:
+    # print("Warning: TTC module not found")
+    TTC_AVAILABLE = False
+
+try:
+    from epf_simple import calculate_epf_collision_risk
+    EPF_AVAILABLE = True
+except ImportError:
+    # print("Warning: EPF module not found")
+    EPF_AVAILABLE = False
+
 
 from metadrive.component.algorithm.blocks_prob_dist import PGBlockDistConfig
 from metadrive.component.map.base_map import BaseMap
@@ -111,6 +130,9 @@ class MetaDriveEnv(BaseEnv):
         # scenario setting
         self.start_seed = self.start_index = self.config["start_seed"]
         self.env_num = self.num_scenarios
+        
+        # TTC功能可用性标志
+        self.ttc_available = TTC_AVAILABLE
 
     def _post_process_config(self, config):
         config = super(MetaDriveEnv, self)._post_process_config(config)
@@ -240,6 +262,52 @@ class MetaDriveEnv(BaseEnv):
             ret = ret or vehicle.on_broken_line
         return ret
 
+    def denormalize_other_vehicles_info(self, obs, vehicle):
+        """
+        反归一化其他车辆信息，从观测中提取并转换为实际物理值
+        :param obs: 完整观测向量 (43维)
+        :param vehicle: 当前车辆实例
+        :return: 包含4个车辆信息的列表，每个车辆包含6个特征的字典
+        """
+        # 观测结构：前19维是基础状态，后24维是4个车辆的信息（每车6维）
+        other_vehicles_info = []
+        start_idx = 19  # 其他车辆信息从第19维开始
+        
+        perceive_distance = vehicle.config["lidar"]["distance"]  # 50米
+        max_speed = vehicle.max_speed_km_h  # 最大速度
+        max_length = getattr(vehicle, 'MAX_LENGTH', 10.0)  # 最大长度，默认10米
+        max_width = getattr(vehicle, 'MAX_WIDTH', 5.0)     # 最大宽度，默认5米
+        
+        for i in range(4):  # 4个其他车辆
+            base_idx = start_idx + i * 6
+            if base_idx + 5 < len(obs):
+                # 反归一化每个特征
+                relative_pos_x = (obs[base_idx] * 2 - 1) * perceive_distance      # 前后距离 (米)
+                relative_pos_y = (obs[base_idx + 1] * 2 - 1) * perceive_distance  # 左右距离 (米)
+                relative_vel_x = (obs[base_idx + 2] * 2 - 1) * max_speed          # 前后相对速度 (km/h)
+                relative_vel_y = (obs[base_idx + 3] * 2 - 1) * max_speed          # 左右相对速度 (km/h)
+                vehicle_length = obs[base_idx + 4] * max_length                   # 车辆长度 (米)
+                vehicle_width = obs[base_idx + 5] * max_width                     # 车辆宽度 (米)
+                
+                # 计算实际距离和速度
+                distance = np.sqrt(relative_pos_x**2 + relative_pos_y**2)
+                relative_speed = np.sqrt(relative_vel_x**2 + relative_vel_y**2)
+                
+                vehicle_info = {
+                    'relative_pos_x': relative_pos_x,       # 前后相对位置 (米)
+                    'relative_pos_y': relative_pos_y,       # 左右相对位置 (米) 
+                    'relative_vel_x': relative_vel_x,       # 前后相对速度 (km/h)
+                    'relative_vel_y': relative_vel_y,       # 左右相对速度 (km/h)
+                    'length': vehicle_length,               # 车辆长度 (米)
+                    'width': vehicle_width,                 # 车辆宽度 (米)
+                    'distance': distance,                   # 总距离 (米)
+                    'relative_speed': relative_speed,       # 相对速度大小 (km/h)
+                    'is_valid': distance > 0.1             # 是否有效（距离>0.1米认为是真实车辆）
+                }
+                other_vehicles_info.append(vehicle_info)
+        
+        return other_vehicles_info
+
     def reward_function(self, vehicle_id: str):
         """
         Override this func to get a new reward function
@@ -248,6 +316,33 @@ class MetaDriveEnv(BaseEnv):
         """
         vehicle = self.agents[vehicle_id]
         step_info = dict()
+        
+        # 获取当前观测并反归一化其他车辆信息
+        ttc_penalty = 0.0
+        epf_penalty = 0.0
+        
+        # 直接使用observation管理器获取当前观测
+        if vehicle_id in self.observations:
+            current_obs = self.observations[vehicle_id].observe(vehicle)
+            other_vehicles = self.denormalize_other_vehicles_info(current_obs, vehicle)
+                
+            # 计算碰撞风险 (如果有车辆检测到)
+            if len(other_vehicles) > 0:
+                # TTC碰撞风险
+                # if TTC_AVAILABLE:
+                #     ttc_penalty = calculate_ttc_collision_risk(
+                #         other_vehicles, penalty_weight=5.0, tau=1.0, max_risk=1.5
+                #     )
+                #     print(f"TTC Penalty: {ttc_penalty:.3f}")
+                
+                # EPF椭圆势场风险
+                if EPF_AVAILABLE:
+                    epf_penalty = calculate_epf_collision_risk(
+                        other_vehicles, penalty_weight=5.0, max_risk=1.5
+                    )
+                    # print(f"EPF Penalty: {epf_penalty:.3f}")
+        
+
 
         # Reward for moving forward in current lane
         if vehicle.lane in vehicle.navigation.current_ref_lanes:
@@ -337,21 +432,26 @@ class MetaDriveEnv(BaseEnv):
 
         # 静默检测推荐路径状态（不打印）
         if is_on_path and vehicle.speed_km_h / vehicle.max_speed_km_h>0.05:
-            reward += 0.5
-            # print("✅ 智能体在推荐路径上")
+            out_drivable_area_penalty = 0.5
+            # print("? 智能体在推荐路径上")
         else:
-            reward += -1
-            # print("❌ 智能体偏离了推荐路径")
+            out_drivable_area_penalty = -20
+            # print("? 智能体偏离了推荐路径")
 
 
         #加入view points奖励
         reward += self.config["driving_reward"] * (long_now - long_last) * lateral_factor * positive_road
         reward += self.config["speed_reward"] * (vehicle.speed_km_h / vehicle.max_speed_km_h) * positive_road
         # reward += R_speed * positive_road
-        reward += R_ckpt
+        # reward += R_ckpt
+        # reward += out_drivable_area_penalty
         # reward += R_smooth
         # reward += heading_reward
         # reward += R_out_of_road
+        
+        # 应用碰撞风险惩罚
+        # reward -= ttc_penalty  # TTC风险惩罚
+        reward -= epf_penalty  # EPF风险惩罚
         
         step_info["step_reward"] = reward
         # print('step_reward:', reward)
@@ -397,9 +497,38 @@ if __name__ == '__main__':
         assert np.isscalar(reward)
         assert isinstance(info, dict)
 
-    env = MetaDriveEnv()
+    # 添加激光雷达配置来包含其他车辆信息
+    config = {
+        "vehicle_config": {
+            "lidar": {
+                "num_lasers": 120,  # 激光束数量
+                "distance": 50,     # 探测距离
+                "num_others": 4,    # 检测其他车辆数量
+                "add_others_navi": False  # 是否包含其他车辆导航信息
+            }
+        },
+        "traffic_density": 0.3  # 增加交通密度以便观察到其他车辆
+    }
+    
+    env = MetaDriveEnv(config)
     try:
         obs, _ = env.reset()
+        # print(f"观测值维度: {obs.shape}, 观测空间: {env.observation_space}")
+        # print(f"配置中的激光雷达设置: {env.config['vehicle_config']['lidar']}")
+        
+        # 测试反归一化函数
+        vehicle = env.agent  # 使用单智能体模式的agent属性
+        other_vehicles_info = env.denormalize_other_vehicles_info(obs, vehicle)
+        # print("\n=== 其他车辆信息 (反归一化后) ===")
+        # for i, info in enumerate(other_vehicles_info):
+        #     if info['is_valid']:
+        #         print(f"车辆 {i+1}: 距离={info['distance']:.1f}m, "
+        #               f"位置=({info['relative_pos_x']:.1f}, {info['relative_pos_y']:.1f}), "
+        #               f"尺寸={info['length']:.1f}×{info['width']:.1f}m, "
+        #               f"相对速度={info['relative_speed']:.1f}km/h")
+        #     else:
+        #         print(f"车辆 {i+1}: 无效/不存在")
+        
         assert env.observation_space.contains(obs)
         _act(env, env.action_space.sample())
         for x in [-1, 0, 1]:
