@@ -478,9 +478,10 @@ class TopDownMultiChannel(TopDownObservation):
         try:
             is_in_drivable = self.check_agent_in_drivable_area(vehicle)
             # 额外打印一行简化信息
-            print(f"[BEV检查] 智能体在可行域内: {is_in_drivable}")
+            # print(f"[BEV检查] 智能体在可行域内: {is_in_drivable}")
         except Exception as e:
-            print(f"[BEV检查] 检查时出错: {e}")
+            # print(f"[BEV检查] 检查时出错: {e}")
+            pass
         
         self.render()
         surface_dict = self.get_observation_window()
@@ -629,18 +630,18 @@ class TopDownMultiChannel(TopDownObservation):
                     is_in_drivable = not is_white_background
                     
                     # 打印调试信息
-                    print(f"智能体位置: ({vehicle_pos[0]:.2f}, {vehicle_pos[1]:.2f})")
-                    print(f"画布像素坐标: ({x}, {y})")
-                    print(f"像素颜色: {rgb}")
-                    print(f"是否在可行域内: {is_in_drivable}")
+                    # print(f"智能体位置: ({vehicle_pos[0]:.2f}, {vehicle_pos[1]:.2f})")
+                    # print(f"画布像素坐标: ({x}, {y})")
+                    # print(f"像素颜色: {rgb}")
+                    # print(f"是否在可行域内: {is_in_drivable}")
                     
                     return is_in_drivable
                     
                 except Exception as e:
-                    print(f"获取像素颜色时出错: {e}")
+                    # print(f"获取像素颜色时出错: {e}")
                     return True  # 默认认为在可行域内
             else:
-                print(f"智能体位置超出画布范围: ({x}, {y}), 画布大小: {canvas_size}")
+                # print(f"智能体位置超出画布范围: ({x}, {y}), 画布大小: {canvas_size}")
                 return False  # 超出画布范围认为不在可行域内
                 
         except Exception as e:
