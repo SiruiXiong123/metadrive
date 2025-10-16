@@ -11,7 +11,7 @@ def create_env():
     cfg = dict(
         num_scenarios=100,
         start_seed=0,
-        use_render=False,
+        use_render=True,
         traffic_density=0.0,
         random_lane_width=True,
         resolution_size=128,
@@ -76,7 +76,7 @@ def evaluate_model(model, env, n_episodes=100):
 if __name__ == "__main__":
     env = create_env()
 
-    model_path = r"C:\Users\37945\OneDrive\Desktop\stage2论文\Case 1\recurrent_ppo_mlp_final.zip"
+    model_path = r"C:\Users\37945\OneDrive\Desktop\stage2论文\Case 4\recurrent_ppo_mlp_final.zip"
     policy_kwargs = dict(
         features_extractor_class=ImageNetBEVCNN,
         features_extractor_kwargs=dict(features_dim=275),

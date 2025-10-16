@@ -32,6 +32,7 @@ class TerminationState:
     CURRENT_BLOCK = "current_block"
     ENV_SEED = "env_seed"
     IDLE = "idle"
+    OFF_RECOMMENDED_PATH = "off_recommended_path"
 
 
 HELP_MESSAGE = "Keyboard Shortcuts:\n" \

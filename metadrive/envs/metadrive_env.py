@@ -111,6 +111,7 @@ METADRIVE_DEFAULT_CONFIG = dict(
     crash_vehicle_done=True,
     crash_object_done=True,
     crash_human_done=True,
+    off_recommended_path_done=True,  # 当智能体偏离推荐道路时是否终止episode
 )
 
 
@@ -167,6 +168,7 @@ class MetaDriveEnv(BaseEnv):
             TerminationState.OUT_OF_ROAD: self._is_out_of_road(vehicle),
             TerminationState.SUCCESS: self._is_arrive_destination(vehicle),
             TerminationState.MAX_STEP: max_step,
+            TerminationState.OFF_RECOMMENDED_PATH: self._is_off_recommended_path(vehicle),
             TerminationState.ENV_SEED: self.current_seed,
             "is_success": is_success if self._is_arrive_destination(vehicle) else False,
         }
@@ -211,6 +213,12 @@ class MetaDriveEnv(BaseEnv):
             done = True
             self.logger.info(
                 "Episode ended! Scenario Index: {} Reason: crash human".format(self.current_seed),
+                extra={"log_once": True}
+            )
+        if done_info[TerminationState.OFF_RECOMMENDED_PATH] and self.config["off_recommended_path_done"]:
+            done = True
+            self.logger.info(
+                "Episode ended! Scenario Index: {} Reason: off recommended path ".format(self.current_seed),
                 extra={"log_once": True}
             )
         if done_info[TerminationState.MAX_STEP]:
@@ -261,6 +269,18 @@ class MetaDriveEnv(BaseEnv):
         if self.config["on_broken_line_done"]:
             ret = ret or vehicle.on_broken_line
         return ret
+
+    def _is_off_recommended_path(self, vehicle):
+        """
+        检查车辆是否偏离推荐道路
+        :param vehicle: 车辆实例
+        :return: 是否偏离推荐道路
+        """
+        try:
+            return not vehicle.navigation.is_on_recommended_path(vehicle)
+        except AttributeError:
+            # 如果navigation模块没有is_on_recommended_path方法，返回False
+            return False
 
     def denormalize_other_vehicles_info(self, obs, vehicle):
         """
