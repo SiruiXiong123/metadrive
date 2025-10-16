@@ -20,7 +20,7 @@ from metadrive.component.road_network.node_road_network import NodeRoadNetwork
 from metadrive.component.navigation_module.node_network_navigation import NodeNetworkNavigation
 from metadrive.component.navigation_module.edge_network_navigation import EdgeNetworkNavigation
 from metadrive.component.navigation_module.trajectory_navigation import TrajectoryNavigation
-from metadrive.obs.state_obs import LidarStateObservation
+from metadrive.obs.state_obs import StateObservation
 import gymnasium as gym
 
 pygame = import_pygame()
@@ -99,7 +99,7 @@ class TopDownMultiChannel(TopDownObservation):
         # in the rendered BEV. Default 8.0m as requested.
         self.camera_forward_m = 15.0
 
-        # Placeholder for LidarStateObservation; real instance will be created in reset
+        # Placeholder for StateObservation; real instance will be created in reset
         self.lidar_state_obs = None
 
     def init_obs_window(self):
@@ -124,7 +124,7 @@ class TopDownMultiChannel(TopDownObservation):
         self.target_vehicle = vehicle
         self._should_draw_map = True
         self._should_fill_stack = True
-        # Create LidarStateObservation here (use env.config when available so the helper
+        # Create StateObservation here (use env.config when available so the helper
         # sees the real vehicle_config and random_agent_model defaults).
         try:
             if getattr(env, "config", None) and isinstance(env.config, dict):
@@ -134,9 +134,9 @@ class TopDownMultiChannel(TopDownObservation):
                 vehicle_cfg = self.config
                 random_agent = False
             state_cfg = dict(vehicle_config=vehicle_cfg, random_agent_model=random_agent)
-            self.lidar_state_obs = LidarStateObservation(state_cfg)
+            self.lidar_state_obs = StateObservation(state_cfg)
             try:
-                # Allow the LidarStateObservation to receive reset info if it overrides reset
+                # Allow the StateObservation to receive reset info if it overrides reset
                 self.lidar_state_obs.reset(env, vehicle)
             except Exception:
                 pass
@@ -523,8 +523,8 @@ class TopDownMultiChannel(TopDownObservation):
             except Exception:
                 state = None
             if state is None:
-                # Default state size for LidarStateObservation (StateObservation 19dim + Lidar info 24dim = 43dim)
-                state = np.zeros((43,), dtype=np.float32)
+                # Default state size for StateObservation (StateObservation basic dim)
+                state = np.zeros((19,), dtype=np.float32)
             return {"image": rgb, "state": state}
 
         # Gray scale
@@ -578,8 +578,8 @@ class TopDownMultiChannel(TopDownObservation):
         except Exception:
             state = None
         if state is None:
-            # Default state size for LidarStateObservation (StateObservation 19dim + Lidar info 24dim = 43dim)
-            state = np.zeros((43,), dtype=np.float32)
+            # Default state size for StateObservation (StateObservation basic dim)
+            state = np.zeros((19,), dtype=np.float32)
 
         return {"image": img, "state": state}
 
@@ -662,7 +662,7 @@ class TopDownMultiChannel(TopDownObservation):
     def observation_space(self):
         # Return a Dict observation space with keys:
         #  - image: HxWx3 RGB (if debug_color True) or HxWxC stacked grayscale  
-        #  - state: 1D state vector (from LidarStateObservation which includes vehicle state + lidar info)
+        #  - state: 1D state vector (from StateObservation which includes vehicle state info)
         # Build image space first
         if getattr(self, 'debug_color', False):
             img_shape = self.obs_shape + (3,)
@@ -677,12 +677,12 @@ class TopDownMultiChannel(TopDownObservation):
             else:
                 image_space = gym.spaces.Box(0, 255, shape=img_shape, dtype=np.uint8)
 
-        # Build state space from LidarStateObservation if available, otherwise default to a larger dim [0,1] for lidar+state
+        # Build state space from StateObservation if available, otherwise default to a larger dim [0,1] for state
         if getattr(self, 'lidar_state_obs', None) is not None:
             state_space = self.lidar_state_obs.observation_space
         else:
-            # LidarStateObservation default: StateObservation (19dim) + Lidar info (24dim) = 43dim
-            state_space = gym.spaces.Box(0.0, 1.0, shape=(43,), dtype=np.float32)
+            # StateObservation default: StateObservation basic dim (19 dimensions)
+            state_space = gym.spaces.Box(0.0, 1.0, shape=(19,), dtype=np.float32)
 
         return gym.spaces.Dict({"image": image_space, "state": state_space})
             

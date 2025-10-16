@@ -443,15 +443,15 @@ class MetaDriveEnv(BaseEnv):
         reward += self.config["driving_reward"] * (long_now - long_last) * lateral_factor * positive_road
         reward += self.config["speed_reward"] * (vehicle.speed_km_h / vehicle.max_speed_km_h) * positive_road
         # reward += R_speed * positive_road
-        # reward += R_ckpt
-        # reward += out_drivable_area_penalty
-        # reward += R_smooth
-        # reward += heading_reward
-        # reward += R_out_of_road
+        #reward += R_ckpt
+        #reward += out_drivable_area_penalty
+        #reward += R_smooth
+        #reward += heading_reward
+        #reward += R_out_of_road
         
         # 应用碰撞风险惩罚
         # reward -= ttc_penalty  # TTC风险惩罚
-        reward -= epf_penalty  # EPF风险惩罚
+        #reward -= epf_penalty  # EPF风险惩罚
         
         step_info["step_reward"] = reward
         # print('step_reward:', reward)
