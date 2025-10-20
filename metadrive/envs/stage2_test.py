@@ -9,9 +9,10 @@ from metadrive.constants import TerminationState
 
 def create_env():
     cfg = dict(
+        # map="SO",
         num_scenarios=100,
         start_seed=0,
-        use_render=True,
+        use_render=False,
         traffic_density=0.0,
         random_lane_width=True,
         resolution_size=128,
@@ -76,10 +77,10 @@ def evaluate_model(model, env, n_episodes=100):
 if __name__ == "__main__":
     env = create_env()
 
-    model_path = r"C:\Users\37945\OneDrive\Desktop\stage2论文\Case 4\recurrent_ppo_mlp_final.zip"
+    model_path = r"C:\Users\37945\OneDrive\Desktop\stage2论文\Case 4\rl_model_2600000_steps"
     policy_kwargs = dict(
         features_extractor_class=ImageNetBEVCNN,
-        features_extractor_kwargs=dict(features_dim=275),
+        features_extractor_kwargs=dict(features_dim=256, concat_state=True),
         normalize_images=False,
         lstm_hidden_size=256,
         n_lstm_layers=1,
