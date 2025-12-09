@@ -14,16 +14,18 @@ import random
 from stable_baselines3.common.callbacks import CheckpointCallback, EveryNTimesteps
 from win32ui import ID_FILE_LOCATE
 from stable_baselines3.common.noise import NormalActionNoise, OrnsteinUhlenbeckActionNoise
+from metadrive.policy.lange_change_policy import LaneChangePolicy
 
 
 
 cfg=dict(
-        map="OOOO",
+        map="O",
         # num_scenarios=500,
         # start_seed=123,
         random_lane_width=True,
         random_lane_num=False,
         use_render=True,
+        agent_policy=LaneChangePolicy,
         traffic_density=0.0,
         traffic_mode="hybrid",
         manual_control=True,
