@@ -33,8 +33,8 @@ class TopDownMultiChannel(TopDownObservation):
     MAP_RESOLUTION = (2000, 2000)  # pix x pix
     # MAX_RANGE = (50, 50)  # maximum detection distance = 50 M
 
-    # CHANNEL_NAMES = ["road_network", "traffic_flow", "target_vehicle", "navigation", "past_pos"]
-    CHANNEL_NAMES = ["road_network", "traffic_flow", "navigation", "past_pos"]
+    # CHANNEL_NAMES should match ObservationWindowMultiChannel's expected keys
+    CHANNEL_NAMES = ["road_network", "traffic_flow", "target_vehicle", "past_pos"]
 
     def __init__(
         self,
@@ -50,12 +50,8 @@ class TopDownMultiChannel(TopDownObservation):
         super(TopDownMultiChannel, self).__init__(
             vehicle_config, clip_rgb, onscreen=onscreen, resolution=resolution, max_distance=max_distance
         )
-        #self.num_stacks = 2 + frame_stack
-        self.num_stacks = 2
+        self.num_stacks = 2  # only road_network and target_vehicle (ego-only)
         self.stack_traffic_flow = deque([], maxlen=(frame_stack - 1) * frame_skip + 1)
-        self.stack_past_pos = deque(
-            [], maxlen=(post_stack - 1) * frame_skip + 1
-        )  # In the coordination of target vehicle
         self.frame_stack = frame_stack
         self.frame_skip = frame_skip
         self._should_fill_stack = True
@@ -74,7 +70,8 @@ class TopDownMultiChannel(TopDownObservation):
         self.canvas_road_network = WorldSurface(self.MAP_RESOLUTION, 0, pygame.Surface(self.MAP_RESOLUTION))
         self.canvas_runtime = WorldSurface(self.MAP_RESOLUTION, 0, pygame.Surface(self.MAP_RESOLUTION))
         self.canvas_ego = WorldSurface(self.MAP_RESOLUTION, 0, pygame.Surface(self.MAP_RESOLUTION))
-        self.canvas_past_pos = pygame.Surface(self.resolution)  # A local view
+        # past_pos channel removed; keep a dedicated ego canvas for ego-only channel
+        # self.canvas_past_pos = pygame.Surface(self.resolution)  # A local view
 
     def reset(self, env, vehicle=None):
         # self.engine = env.engine
@@ -157,8 +154,11 @@ class TopDownMultiChannel(TopDownObservation):
 
         # self._refresh(self.canvas_ego, pos, clip_size)
         self._refresh(self.canvas_runtime, pos, clip_size)
-        self.canvas_past_pos.fill(COLOR_BLACK)
-        # self._draw_ego_vehicle()
+        # Clear ego canvas and prepare ego-only drawing
+        try:
+            self.canvas_ego.fill(COLOR_BLACK)
+        except Exception:
+            pass
 
         # Draw vehicles
         # TODO PZH: I hate computing these in pygame-related code!!!
@@ -173,53 +173,56 @@ class TopDownMultiChannel(TopDownObservation):
             h = h if abs(h) > 2 * np.pi / 180 else 0
             ObjectGraphics.display(object=v, surface=self.canvas_runtime, heading=h, color=ObjectGraphics.BLUE)
 
-        raw_pos = vehicle.position
-        self.stack_past_pos.append(raw_pos)
-        for p_index in self._get_stack_indices(len(self.stack_past_pos)):
-            p_old = self.stack_past_pos[p_index]
-            diff = p_old - raw_pos
-            diff = (diff[0] * self.scaling, diff[1] * self.scaling)
-            # p = (p_old[0] - pos[0], p_old[1] - pos[1])
-            diff = (diff[1], diff[0])
-            p = pygame.math.Vector2(tuple(diff))
-            # p = pygame.math.Vector2(p)
-            p = p.rotate(np.rad2deg(ego_heading) + 90)
-            p = (p[1], p[0])
-            p = (
-                clip(p[0] + self.resolution[0] / 2, -self.resolution[0],
-                     self.resolution[0]), clip(p[1] + self.resolution[1] / 2, -self.resolution[1], self.resolution[1])
-            )
-            # p = self.canvas_background.pos2pix(p[0], p[1])
-            self.canvas_past_pos.fill((255, 255, 255), (p, (1, 1)))
-            # pygame.draw.circle(self.canvas_past_pos, (255, 255, 255), p, radius=1)
-
+        # Draw only the ego vehicle on the ego canvas (do not include other vehicles)
+        try:
+            self._draw_ego_vehicle()
+        except Exception:
+            pass
+        # Do not draw navigation on ego canvas — keep channel2 only the ego vehicle
+        # (navigation and road network are drawn on canvas_background/road_network only)
         ret = self.obs_window.render(
             canvas_dict=dict(
                 road_network=self.canvas_road_network,
                 traffic_flow=self.canvas_runtime,
                 target_vehicle=self.canvas_ego,
-                # navigation=self.canvas_navigation,
             ),
             position=pos,
             heading=vehicle.heading_theta
         )
-        ret["past_pos"] = self.canvas_past_pos
         return ret
 
     def _draw_ego_vehicle(self):
         vehicle = self.engine.agents[DEFAULT_AGENT]
-        w = vehicle.top_down_width * self.scaling
-        h = vehicle.top_down_length * self.scaling
-        position = (self.resolution[0] / 2, self.resolution[1] / 2)
-        angle = 90
-        box = [pygame.math.Vector2(p) for p in [(-h / 2, -w / 2), (-h / 2, w / 2), (h / 2, w / 2), (h / 2, -w / 2)]]
-        box_rotate = [p.rotate(angle) + position for p in box]
-        pygame.draw.polygon(self.canvas_past_pos, color=(128, 128, 128), points=box_rotate)
+        # Get ego size in meters (fallbacks)
+        w_m = vehicle.top_down_width or 1.0
+        h_m = vehicle.top_down_length or 1.0
+        # Convert sizes to pixels on the world canvas
+        try:
+            w_px = self.canvas_ego.pix(w_m)
+            h_px = self.canvas_ego.pix(h_m)
+            # center in world pixels
+            center = self.canvas_ego.pos2pix(*vehicle.position)
+            angle = -np.rad2deg(vehicle.heading_theta)
+            box = [pygame.math.Vector2(p) for p in [(-h_px / 2, -w_px / 2), (-h_px / 2, w_px / 2), (h_px / 2, w_px / 2), (h_px / 2, -w_px / 2)]]
+            box_rotate = [p.rotate(angle) + pygame.math.Vector2(center) for p in box]
+            try:
+                pygame.draw.polygon(self.canvas_ego, color=(255, 255, 255), points=box_rotate)
+            except Exception:
+                pass
+        except Exception:
+            # fallback to previous drawing at center if any error
+            try:
+                size = self.obs_window.get_size()
+                position = (size[0] / 2, size[1] / 2)
+                angle = -np.rad2deg(vehicle.heading_theta)
+                box = [pygame.math.Vector2(p) for p in [(-h_m / 2, -w_m / 2), (-h_m / 2, w_m / 2), (h_m / 2, w_m / 2), (h_m / 2, -w_m / 2)]]
+                box_rotate = [p.rotate(angle) + position for p in box]
+                pygame.draw.polygon(self.canvas_ego, color=(255, 255, 255), points=box_rotate)
+            except Exception:
+                pass
 
     def get_observation_window(self):
-        ret = self.obs_window.get_observation_window()
-        ret["past_pos"] = self.canvas_past_pos
-        return ret
+        return self.obs_window.get_observation_window()
 
     def _transform(self, img):
         # img = np.mean(img, axis=-1)
@@ -244,33 +247,19 @@ class TopDownMultiChannel(TopDownObservation):
         # Gray scale
         img_dict = {k: self._transform(img) for k, img in img_dict.items()}
 
-        # if self._should_fill_stack:
-        #     self.stack_past_pos.clear()
-        #     self.stack_traffic_flow.clear()
-        #     for _ in range(self.stack_traffic_flow.maxlen):
-        #         self.stack_traffic_flow.append(img_dict["traffic_flow"])
-        #     self._should_fill_stack = False
-        # self.stack_traffic_flow.append(img_dict["traffic_flow"])
+        if self._should_fill_stack:
+            self.stack_traffic_flow.clear()
+            for _ in range(self.stack_traffic_flow.maxlen):
+                self.stack_traffic_flow.append(img_dict["traffic_flow"])
+            self._should_fill_stack = False
+        self.stack_traffic_flow.append(img_dict["traffic_flow"])
 
+        # Only keep the first two channels as observation: road_network and ego-only channel.
+        # Hidden: stacked traffic_flow frames are kept internally but not exposed.
         img = [
             img_dict["road_network"] * 2,
-            # img_navigation,
-            # img_dict["navigation"],
-            # img_dict["target_vehicle"],
-            img_dict["past_pos"],
-        ]  # + list(self.stack_traffic_flow)
-
-        # Stacked traffic flow
-        # stacked = np.zeros_like(img_navigation)
-        indices = self._get_stack_indices(len(self.stack_traffic_flow))
-        # for i in reversed(indices):
-        #     stacked = self.stack_traffic_flow[i] + stacked / 2
-        # if self.norm_pixel:
-        #     stacked = np.clip(stacked, 0.0, 1.0)
-        # else:
-        #     stacked = np.clip(stacked, 0, 255)
-        # for i in indices:
-        #     img.append(self.stack_traffic_flow[i])
+            img_dict["target_vehicle"],
+        ]
 
         # Stack
         img = np.stack(img, axis=2)
@@ -282,14 +271,64 @@ class TopDownMultiChannel(TopDownObservation):
 
     def draw_navigation_node(self, canvas, color=(128, 128, 128)):
         checkpoints = self.target_vehicle.navigation.checkpoints
+        # Draw navigation as filled drivable area for map/background use.
+        # This preserves channel-1's original filled appearance when called from draw_map().
         for i, c in enumerate(checkpoints[:-1]):
             lanes = self.road_network.graph[c][checkpoints[i + 1]]
             for lane in lanes:
                 LaneGraphics.draw_drivable_area(lane, canvas, color=color)
 
+    def draw_navigation_node_lines(self, canvas, color=(128, 128, 128)):
+        checkpoints = self.target_vehicle.navigation.checkpoints
+        # Draw navigation as lane lines (outline) for ego/second-channel use, so it differs
+        # visually from the filled drivable area in channel-1.
+        for i, c in enumerate(checkpoints[:-1]):
+            next_ckpt = checkpoints[i + 1]
+            lanes = self.road_network.graph[c][next_ckpt]
+            # For each lane on the navigation route, draw a thin centerline by sampling
+            # points along the lane geometry. This avoids drawing full lane/road polygons.
+            for lane in lanes:
+                try:
+                    length = max(2, int(lane.length))
+                    pts = []
+                    # sample along lane (every 1 meter or at least start/end)
+                    for s in np.linspace(0, lane.length, length):
+                        p = lane.position(s, 0)
+                        pix = canvas.pos2pix(p[0], p[1])
+                        pts.append((int(pix[0]), int(pix[1])))
+                    if len(pts) >= 2:
+                        pygame.draw.lines(canvas, color, False, pts, 1)
+                except Exception:
+                    # fallback: draw straight line between lane endpoints
+                    try:
+                        p1 = lane.position(0, 0)
+                        p2 = lane.position(lane.length, 0)
+                        pix1 = canvas.pos2pix(p1[0], p1[1])
+                        pix2 = canvas.pos2pix(p2[0], p2[1])
+                        pygame.draw.line(canvas, color, (int(pix1[0]), int(pix1[1])), (int(pix2[0]), int(pix2[1])), 1)
+                    except Exception:
+                        pass
+
     def draw_navigation_trajectory(self, canvas, color=(128, 128, 128)):
         lane = PointLane(self.target_vehicle.navigation.checkpoints, DEFAULT_TRAJECTORY_LANE_WIDTH)
         LaneGraphics.draw_drivable_area(lane, canvas, color=color)
+
+    def draw_navigation_trajectory_lines(self, canvas, color=(128, 128, 128)):
+        # Draw trajectory navigation as a thin polyline (centerline) instead of filled area.
+        try:
+            checkpoints = self.target_vehicle.navigation.checkpoints
+            lane = PointLane(checkpoints, DEFAULT_TRAJECTORY_LANE_WIDTH)
+            # sample points along trajectory
+            num = max(2, int(lane.length))
+            pts = []
+            for s in np.linspace(0, lane.length, num):
+                p = lane.position(s, 0)
+                pix = canvas.pos2pix(p[0], p[1])
+                pts.append((int(pix[0]), int(pix[1])))
+            if len(pts) >= 2:
+                pygame.draw.lines(canvas, color, False, pts, 1)
+        except Exception:
+            pass
 
     def _get_stack_indices(self, length, frame_skip=None):
         frame_skip = frame_skip or self.frame_skip
