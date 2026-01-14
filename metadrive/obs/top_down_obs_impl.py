@@ -463,16 +463,17 @@ class ObservationWindowMultiChannel:
 
     def __init__(self, names, max_range, resolution):
         assert isinstance(names, list)
-        assert set(self.CHANNEL_NAMES)
-        self.sub_observations = {
-            k: ObservationWindow(max_range=max_range, resolution=resolution)
-            for k in ["traffic_flow", "target_vehicle"]
-        }
-        self.sub_observations["road_network"] = ObservationWindow(
-            max_range=max_range,
-            resolution=(resolution[0] * 2, resolution[1] * 2)
-            # max_range=max_range, resolution=resolution
-        )
+        # Create a sub observation window for each requested channel name.
+        # Road network gets a higher-resolution window (double size), others use normal resolution.
+        self.sub_observations = {}
+        for k in names:
+            if k == "road_network":
+                self.sub_observations[k] = ObservationWindow(
+                    max_range=max_range,
+                    resolution=(resolution[0] * 2, resolution[1] * 2)
+                )
+            else:
+                self.sub_observations[k] = ObservationWindow(max_range=max_range, resolution=resolution)
 
         self.resolution = (resolution[0] * 2, resolution[1] * 2)
         self.canvas_display = None
@@ -518,6 +519,9 @@ class ObservationWindowMultiChannel:
 
         if "navigation" in ret:
             _draw(canvas, "navigation", pygame.Color("Blue"))
+        # Support a dedicated navigation overlay channel named 'traffic_flow_nav'
+        if "traffic_flow_nav" in ret:
+            _draw(canvas, "traffic_flow_nav", pygame.Color("White"))
         _draw(canvas, "road_network", pygame.Color("White"))
         _draw(canvas, "traffic_flow", pygame.Color("Red"))
         _draw(canvas, "target_vehicle", pygame.Color("Green"))

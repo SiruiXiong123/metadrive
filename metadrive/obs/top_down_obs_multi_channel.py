@@ -29,12 +29,12 @@ class TopDownMultiChannel(TopDownObservation):
     Most of the source code is from Highway-Env, we only optimize and integrate it in MetaDrive
     See more information on its Github page: https://github.com/eleurent/highway-env
     """
-    RESOLUTION = (100, 100)  # pix x pix
+    RESOLUTION = (128, 128)  # pix x pix
     MAP_RESOLUTION = (2000, 2000)  # pix x pix
     # MAX_RANGE = (50, 50)  # maximum detection distance = 50 M
 
     # CHANNEL_NAMES should match ObservationWindowMultiChannel's expected keys
-    CHANNEL_NAMES = ["road_network", "traffic_flow", "target_vehicle", "past_pos"]
+    CHANNEL_NAMES = ["road_network", "traffic_flow", "target_vehicle", "traffic_flow_nav"]
 
     def __init__(
         self,
@@ -50,7 +50,7 @@ class TopDownMultiChannel(TopDownObservation):
         super(TopDownMultiChannel, self).__init__(
             vehicle_config, clip_rgb, onscreen=onscreen, resolution=resolution, max_distance=max_distance
         )
-        self.num_stacks = 2  # only road_network and target_vehicle (ego-only)
+        self.num_stacks = 3  # road_network, target_vehicle and traffic_flow_nav
         self.stack_traffic_flow = deque([], maxlen=(frame_stack - 1) * frame_skip + 1)
         self.frame_stack = frame_stack
         self.frame_skip = frame_skip
@@ -61,7 +61,7 @@ class TopDownMultiChannel(TopDownObservation):
 
     def init_obs_window(self):
         names = self.CHANNEL_NAMES.copy()
-        names.remove("past_pos")
+        # keep all channel names that we want to render in the obs window
         self.obs_window = ObservationWindowMultiChannel(names, (self.max_distance, self.max_distance), self.resolution)
 
     def init_canvas(self):
@@ -114,7 +114,7 @@ class TopDownMultiChannel(TopDownObservation):
         self.canvas_road_network.move_display_window_to(centering_pos)
 
         if isinstance(self.target_vehicle.navigation, NodeNetworkNavigation):
-            self.draw_navigation_node(self.canvas_background, (64, 64, 64))
+            self.draw_navigation_node(self.canvas_background, (255, 255, 255))
         elif isinstance(self.target_vehicle.navigation, EdgeNetworkNavigation):
             # TODO: draw edge network navigation
             pass
@@ -148,7 +148,22 @@ class TopDownMultiChannel(TopDownObservation):
         # Set the active area that can be modify to accelerate
         assert len(self.engine.agents) == 1, "Don't support multi-agent top-down observation yet!"
         vehicle = self.engine.agents[DEFAULT_AGENT]
-        pos = self.canvas_runtime.pos2pix(*vehicle.position)
+        # Shift camera ahead and to the left to reduce useless pixels in BEV
+        x, y = vehicle.position
+        theta = vehicle.heading_theta
+
+        forward_m = 15.0
+        left_m = 8.0
+
+        # forward unit vector
+        fx, fy = math.cos(theta), math.sin(theta)
+        # left unit vector (90deg CCW from forward)
+        lx, ly = -math.sin(theta), math.cos(theta)
+
+        cam_x = x + forward_m * fx + left_m * lx
+        cam_y = y + forward_m * fy + left_m * ly
+
+        pos = self.canvas_runtime.pos2pix(cam_x, cam_y)
 
         clip_size = (int(self.obs_window.get_size()[0] * 1.1), int(self.obs_window.get_size()[0] * 1.1))
 
@@ -165,13 +180,14 @@ class TopDownMultiChannel(TopDownObservation):
         ego_heading = vehicle.heading_theta
         ego_heading = ego_heading if abs(ego_heading) > 2 * np.pi / 180 else 0
 
-        for v in self.engine.get_objects(lambda o: isinstance(o, BaseVehicle) or isinstance(o, BaseTrafficParticipant)
-                                         ).values():
-            if v is vehicle:
-                continue
-            h = v.heading_theta
-            h = h if abs(h) > 2 * np.pi / 180 else 0
-            ObjectGraphics.display(object=v, surface=self.canvas_runtime, heading=h, color=ObjectGraphics.BLUE)
+        # Commented out: do not draw other vehicles here to keep the third channel clean
+        # for v in self.engine.get_objects(lambda o: isinstance(o, BaseVehicle) or isinstance(o, BaseTrafficParticipant)
+        #                                  ).values():
+        #     if v is vehicle:
+        #         continue
+        #     h = v.heading_theta
+        #     h = h if abs(h) > 2 * np.pi / 180 else 0
+        #     ObjectGraphics.display(object=v, surface=self.canvas_runtime, heading=h, color=ObjectGraphics.BLUE)
 
         # Draw only the ego vehicle on the ego canvas (do not include other vehicles)
         try:
@@ -180,11 +196,84 @@ class TopDownMultiChannel(TopDownObservation):
             pass
         # Do not draw navigation on ego canvas — keep channel2 only the ego vehicle
         # (navigation and road network are drawn on canvas_background/road_network only)
+        # Prepare navigation-overlay channel: copy of traffic flow with navigation drawn
+        try:
+            # refresh the navigation canvas in the active clipped area
+            self._refresh(self.canvas_navigation, pos, clip_size)
+            self.canvas_navigation.fill(COLOR_BLACK)
+            # Draw only navigation checkpoint markers (use ego.get_checkpoints if present)
+            try:
+                vehicle_for_ckpt = vehicle
+                if hasattr(vehicle_for_ckpt, "get_checkpoints"):
+                    ckpts = vehicle_for_ckpt.get_checkpoints()
+                else:
+                    ckpts = vehicle_for_ckpt.navigation.get_checkpoints()
+
+                # ckpts may be a tuple of two checkpoints or a list/array
+                points = []
+                if isinstance(ckpts, (list, tuple)):
+                    for c in ckpts:
+                        try:
+                            x, y = float(c[0]), float(c[1])
+                            points.append((x, y))
+                        except Exception:
+                            pass
+                else:
+                    try:
+                        x, y = float(ckpts[0]), float(ckpts[1])
+                        points.append((x, y))
+                    except Exception:
+                        pass
+
+                # (debug prints removed)
+
+                # draw small white circles for each checkpoint (same color as ego in second channel)
+                for p in points:
+                    pix = self.canvas_navigation.pos2pix(p[0], p[1])
+                    try:
+                        # 计算基准半径（像素），将检查点半径放大为原来的两倍
+                        base_radius = max(2, int(self.canvas_navigation.pix(0.5)))
+                        checkpoint_radius = base_radius * 2
+                        # 单个检查点直径（像素）
+                        checkpoint_diameter = checkpoint_radius * 2
+                        # 绘制检查点圆
+                        pygame.draw.circle(
+                            self.canvas_navigation,
+                            COLOR_WHITE,
+                            (int(pix[0]), int(pix[1])),
+                            checkpoint_radius,
+                        )
+                    except Exception:
+                        pass
+
+                # 如果有至少两个检查点，绘制白色连线连接它们
+                # 在此启用连线绘制，并将线宽放大为原来的两倍
+                if len(points) >= 2:
+                    try:
+                        pix_pts = [self.canvas_navigation.pos2pix(p[0], p[1]) for p in points]
+                        int_pts = [(int(px[0]), int(px[1])) for px in pix_pts]
+                        # 连线宽度设置为两个检查点的直径（像素）
+                        line_width = max(1, int(checkpoint_diameter * 2))
+                        pygame.draw.lines(
+                            self.canvas_navigation,
+                            COLOR_WHITE,
+                            False,
+                            int_pts,
+                            line_width,
+                        )
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+        except Exception:
+            pass
+
         ret = self.obs_window.render(
             canvas_dict=dict(
                 road_network=self.canvas_road_network,
                 traffic_flow=self.canvas_runtime,
                 target_vehicle=self.canvas_ego,
+                traffic_flow_nav=self.canvas_navigation,
             ),
             position=pos,
             heading=vehicle.heading_theta
@@ -242,6 +331,11 @@ class TopDownMultiChannel(TopDownObservation):
         self.render()
         surface_dict = self.get_observation_window()
         surface_dict["road_network"] = pygame.transform.smoothscale(surface_dict["road_network"], self.resolution)
+        # scale the navigation overlay channel as well
+        try:
+            surface_dict["traffic_flow_nav"] = pygame.transform.smoothscale(surface_dict["traffic_flow_nav"], self.resolution)
+        except Exception:
+            pass
         img_dict = {k: pygame.surfarray.array3d(surface) for k, surface in surface_dict.items()}
 
         # Gray scale
@@ -254,12 +348,31 @@ class TopDownMultiChannel(TopDownObservation):
             self._should_fill_stack = False
         self.stack_traffic_flow.append(img_dict["traffic_flow"])
 
-        # Only keep the first two channels as observation: road_network and ego-only channel.
-        # Hidden: stacked traffic_flow frames are kept internally but not exposed.
-        img = [
-            img_dict["road_network"] * 2,
-            img_dict["target_vehicle"],
-        ]
+        # Keep three channels as observation: road_network, ego-only channel, and
+        # traffic_flow with navigation overlay (for debugging/navigation visualization).
+        # Apply channel intensity adjustments similar to BEV image saving pipeline.
+        ch_road = img_dict["road_network"]
+        ch_ego = img_dict["target_vehicle"]
+        ch_nav = img_dict.get("traffic_flow_nav", img_dict["traffic_flow"])
+
+        # Per-channel multipliers (match BEV saving behavior where road is emphasized)
+        channel_multiplier = {
+            "road_network": 2.0,
+            "target_vehicle": 1.0,
+            "traffic_flow_nav": 1.0,
+        }
+
+        def _normalize_channel(ch):
+            # If values are in 0-255 range, scale to 0-1 like get_bev_hwc
+            if ch.max() > 1.0:
+                ch = ch.astype(np.float32) / 255.0
+            return np.clip(ch, 0.0, 1.0)
+
+        ch_road = _normalize_channel(ch_road) * channel_multiplier["road_network"]
+        ch_ego = _normalize_channel(ch_ego) * channel_multiplier["target_vehicle"]
+        ch_nav = _normalize_channel(ch_nav) * channel_multiplier["traffic_flow_nav"]
+
+        img = [ch_road, ch_ego, ch_nav]
 
         # Stack
         img = np.stack(img, axis=2)

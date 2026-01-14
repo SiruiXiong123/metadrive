@@ -38,7 +38,7 @@ METADRIVE_DEFAULT_CONFIG = dict(
     store_map=True,
 
     # ===== Traffic =====
-    traffic_density=0.0,
+    traffic_density=0.1,
     need_inverse_traffic=False,
     traffic_mode=TrafficMode.Trigger,  # "Respawn", "Trigger"
     random_traffic=False,  # Traffic is randomized at default.
@@ -243,43 +243,11 @@ class MetaDriveEnv(BaseEnv):
             ret = ret or vehicle.on_broken_line
         return ret
 
-    def reward_function(self, vehicle_id: str):
-        """
-        Override this func to get a new reward function
-        :param vehicle_id: id of BaseVehicle
-        :return: reward
-        """
+    # def reward_function(self, vehicle_id: str):
         vehicle = self.agents[vehicle_id]
         step_info = dict()
-        
-        # 获取当前观测并反归一化其他车辆信息
-        ttc_penalty = 0.0
-        epf_penalty = 0.0
-        
-        # 直接使用observation管理器获取当前观测
-        # if vehicle_id in self.observations:
-        #     current_obs = self.observations[vehicle_id].observe(vehicle)
-        #     other_vehicles = self.denormalize_other_vehicles_info(current_obs, vehicle)
-                
-            # 计算碰撞风险 (如果有车辆检测到)
-            # if len(other_vehicles) > 0:
-            #     # TTC碰撞风险
-            #     # if TTC_AVAILABLE:
-            #     #     ttc_penalty = calculate_ttc_collision_risk(
-            #     #         other_vehicles, penalty_weight=5.0, tau=1.0, max_risk=1.5
-            #     #     )
-            #     #     print(f"TTC Penalty: {ttc_penalty:.3f}")
-                
-            #     # EPF椭圆势场风险
-            #     if EPF_AVAILABLE:
-            #         epf_penalty = calculate_epf_collision_risk(
-            #             other_vehicles, penalty_weight=5.0, max_risk=1.5
-            #         )
-            #         # print(f"EPF Penalty: {epf_penalty:.3f}")
-        
+        reward = 0.0
 
-
-        # Reward for moving forward in current lane
         if vehicle.lane in vehicle.navigation.current_ref_lanes:
             current_lane = vehicle.lane
             positive_road = 1
@@ -290,125 +258,153 @@ class MetaDriveEnv(BaseEnv):
         long_last, _ = current_lane.local_coordinates(vehicle.last_position)
         long_now, lateral_now = current_lane.local_coordinates(vehicle.position)
 
-        # reward for lane keeping, without it vehicle can learn to overtake but fail to keep in lane
-        if self.config["use_lateral_reward"]:
-            lateral_factor = clip(1 - 2 * abs(lateral_now) / vehicle.navigation.get_current_lane_width(), 0.0, 1.0)
+        vehicle.dist_to_left_side = abs(vehicle.dist_to_left_side)
+        vehicle.dist_to_right_side = abs(vehicle.dist_to_right_side)
+        # ==========out of road 风险
+        if vehicle.dist_to_left_side-0.5*vehicle.WIDTH < 0.5:
+            out_of_risk_l = 0.1/(((vehicle.dist_to_left_side-0.4*vehicle.WIDTH)/(0.5))**2+1)
         else:
-            lateral_factor = 1.0
-
-        nav = vehicle.navigation
-
-        # 推荐用当前参考车道作为 ref_lane
-        # ref_lane = nav.current_ref_lanes[0]   # 或 ref_lane = vehicle.lane
-
-        # # 调用（lanes_id=0 表示当前路段，lanes_id=1 表示下一路段）
-        # navi_info, lanes_heading, cp = nav._get_info_for_checkpoint(lanes_id=0, ref_lane=ref_lane, ego_vehicle=vehicle)
-
-        # print("navi_info:", navi_info[0],navi_info[1])
-        cp, _ = vehicle.navigation.get_checkpoints()
-        dist_m = np.linalg.norm(np.array(cp) - np.array(vehicle.position))
-        sigma = 3
-
-        reward = 0.0
-        
-        #-------------checkpoint reward----------------
-        R_ckpt = 0.0
-        ckpt_reward = math.exp(- (dist_m /10) ** 2)
-
-        if vehicle.speed_km_h / vehicle.max_speed_km_h>0.1:
-            R_ckpt = 2 * ckpt_reward
+            out_of_risk_l = 0.0
+        if vehicle.dist_to_right_side-0.5*vehicle.WIDTH < 0.5:
+            out_of_risk_r = 0.1/(((vehicle.dist_to_right_side-0.4*vehicle.WIDTH)/(0.5))**2+1)
         else:
-            R_ckpt += 0
+            out_of_risk_r = 0.0
+        reward -= 20 * (out_of_risk_l + out_of_risk_r)
+
+        #靠近checkpoint奖励
+        ckpt, _ = vehicle.navigation.get_checkpoints()   # 最近的 checkpoint
+        dist = np.linalg.norm(vehicle.position - ckpt)   # 与 checkpoint 的欧式距离
+        reward += 0.5 * np.exp(-dist)
 
         current_reference_lane = vehicle.lane
-
         heading_diff = vehicle.heading_diff(current_reference_lane)
-        heading_reward = 0.15 * (1.0 / (abs(0.5 - heading_diff) + 1.0))
-        # print('heading_diff:', heading_diff)
-        v_t = vehicle.speed_km_h
-        v_d = 80
-        R_speed = 0.15 * (1.0 / ((abs(v_t - v_d) / v_d) + 1.0))
+        heading_factor = (1 - math.exp(-10 * (1 - heading_diff)))  # 未使用，但保留你的计算
+        lateral_factor = clip(1 - 2 * abs(lateral_now) / vehicle.navigation.get_current_lane_width(), 0.0, 1.0)
+        speed = (vehicle.speed_km_h / vehicle.max_speed_km_h)
+        progress = long_now - long_last
+        reward += self.config["driving_reward"] * progress * positive_road
+        reward += self.config["speed_reward"] * speed
 
-        #------------smooth reward----------------
-        steering_last = clip((vehicle.last_current_action[1][0] + 1) / 2, 0.0, 1.0)
-        steering_now = clip((vehicle.steering / vehicle.MAX_STEERING + 1) / 2, 0.0, 1.0)
-        delta_steer = abs(steering_now - steering_last)
-        R_smooth = 0.05 * (1.0 - delta_steer)
-        R_smooth = max(R_smooth, 0.0)
-        
-
-        #-------------out of road penalty----------------
-        dleft = vehicle.dist_to_left_side        # 左侧到道路边界的距离
-        dright = vehicle.dist_to_right_side      # 右侧到道路边界的距离
-        W = vehicle.WIDTH                        # 车辆宽度
-        Wlane = vehicle.navigation.get_current_lane_width()  # 当前车道宽度
-        # print('左侧距离:', dleft, '右侧距离:', dright, '车辆宽度:', W, '车道宽度:', Wlane)
-        if dleft < 0.5 * Wlane:
-            P_left = 1 / (((dleft - 0.5 * W) / (0.5 * Wlane)) ** 2 + 1.0)
-        else:
-            P_left = 0.0
-
-        # 计算右侧风险
-        if dright < 0.5 * Wlane:
-            P_right = 1 / (((dright - 0.5 * W) / (0.5 * Wlane)) ** 2 + 1.0)
-        else:
-            P_right = 0.0
-
-        # 计算越界惩罚
-        R_out_of_road = -3 * (P_left + P_right)
-
-        # is_on_path = vehicle.navigation.is_on_recommended_path(vehicle)
-
-        # 静默检测推荐路径状态（不打印）
-        # if is_on_path and vehicle.speed_km_h / vehicle.max_speed_km_h>0.05:
-        #     out_drivable_area_penalty = 0.5
-        #     # print("? 智能体在推荐路径上")
-        # else:
-        #     out_drivable_area_penalty = -20
-            # print("? 智能体偏离了推荐路径")
+        #鼓励车辆朝ckpt
 
 
-        #加入view points奖励
-        progress_reward = 5 * (long_now - long_last) * lateral_factor * positive_road
-        speed_reward = 1 * (vehicle.speed_km_h / vehicle.max_speed_km_h) * positive_road
-        reward += progress_reward
-        reward += speed_reward
-        # print(f"奖励值{reward},progress_reward{progress_reward},速度奖励{speed_reward}")
-        # reward += R_speed * positive_road
-        #reward += R_ckpt
-        #reward += out_drivable_area_penalty
-        #reward += R_smooth
-        #reward += heading_reward
-        #reward += R_out_of_road
-        
-        # 应用碰撞风险惩罚
-        # reward -= ttc_penalty  # TTC风险惩罚
-        #reward -= epf_penalty  # EPF风险惩罚
-        
+
+        # 在完成度奖励
+        c_now = float(vehicle.navigation.route_completion)
+        c_last = float(vehicle.navigation.last_route_completion)
+        dc = max(0.0, c_now - c_last)
+        reward += dc
+
+        vehicle.navigation.last_route_completion = c_now
+
         step_info["step_reward"] = reward
-        # print('step_reward:', reward)
-        # print('R_ckpt:', R_ckpt)
-        # if R_drivable_area != 0:
-        #     print('可行域惩罚:', R_drivable_area)
-        # print('step_reward:', reward)
-        # print('出界惩罚:', R_out_of_road)
-        
-        # print(f"离导航点距离: {dist_m}")
-        # print('靠近导航点奖励:', R_ckpt)
+
+
         if self._is_arrive_destination(vehicle):
             reward = +self.config["success_reward"]
+            print("success")
         elif self._is_out_of_road(vehicle):
             reward = -self.config["out_of_road_penalty"]
+            print("out of road")
         elif vehicle.crash_vehicle:
             reward = -self.config["crash_vehicle_penalty"]
+            print("crash vehicle")
         elif vehicle.crash_object:
             reward = -self.config["crash_object_penalty"]
+            print("crash object")
         elif vehicle.crash_sidewalk:
             reward = -self.config["crash_sidewalk_penalty"]
+            print("crash sidewalk")
         step_info["route_completion"] = vehicle.navigation.route_completion
 
-        return reward, step_info
+        print(f"[Step Reward Breakdown] "
+          f"out_risk={out_risk_penalty:.3f}, "
+          f"ckpt={ckpt_reward:.3f}, "
+          f"progress={progress_reward:.3f}, "
+          f"speed={speed_reward:.3f}, "
+          f"route={route_reward:.3f}, "
+          f"TOTAL={reward:.3f}")
 
+        return reward, step_info
+    def reward_function(self, vehicle_id: str):
+        vehicle = self.agents[vehicle_id]
+        step_info = dict()
+        reward = 0.0
+
+        # # ===== 1. out-of-road 风险 =====
+        # if vehicle.dist_to_left_side-0.5*vehicle.WIDTH < 0.5:
+        #     out_of_risk_l = 0.1/(((vehicle.dist_to_left_side-0.4*vehicle.WIDTH)/(0.5))**2+1)
+        # else:
+        #     out_of_risk_l = 0.0
+        # if vehicle.dist_to_right_side-0.5*vehicle.WIDTH < 0.5:
+        #     out_of_risk_r = 0.1/(((vehicle.dist_to_right_side-0.4*vehicle.WIDTH)/(0.5))**2+1)
+        # else:
+        #     out_of_risk_r = 0.0
+        # out_risk_penalty = -20 * (out_of_risk_l + out_of_risk_r)
+        # reward += out_risk_penalty
+        # step_info["out_risk_penalty"] = out_risk_penalty
+
+        # # ===== 2. checkpoint 距离奖励 =====
+        # ckpt, _ = vehicle.navigation.get_checkpoints()
+        # dist = np.linalg.norm(vehicle.position - ckpt)
+        # ckpt_reward = 0.5 * np.exp(-dist)
+        # reward += ckpt_reward
+        # step_info["ckpt_reward"] = ckpt_reward
+
+        # ===== 3. progress + speed =====
+        current_lane = vehicle.lane
+        long_last, _ = current_lane.local_coordinates(vehicle.last_position)
+        long_now, lateral_now = current_lane.local_coordinates(vehicle.position)
+        positive_road = 1
+        progress = long_now - long_last
+        progress_reward = self.config["driving_reward"] * progress * positive_road
+        speed_reward = self.config["speed_reward"] * (vehicle.speed_km_h / vehicle.max_speed_km_h)
+        reward += progress_reward + speed_reward
+        reward -= 0.01
+        step_info["progress_reward"] = progress_reward
+        step_info["speed_reward"] = speed_reward
+        # print(f"reward{reward}")
+
+        # # ===== 4. route completion =====
+        # c_now = float(vehicle.navigation.route_completion)
+        # c_last = float(vehicle.navigation.last_route_completion)
+        # dc = max(0.0, c_now - c_last)
+        # route_reward = dc
+        # reward += route_reward
+        # step_info["route_reward"] = route_reward
+        # vehicle.navigation.last_route_completion = c_now
+        # reward -= 0.05  # time penalty
+
+        # ===== 5. 终止条件强奖励/惩罚 =====
+        if self._is_arrive_destination(vehicle):
+            reward = +self.config["success_reward"]
+            step_info["terminal_reason"] = "success"
+        elif self._is_out_of_road(vehicle):
+            reward = -self.config["out_of_road_penalty"]
+            step_info["terminal_reason"] = "out_of_road"
+        elif vehicle.crash_vehicle:
+            reward = -self.config["crash_vehicle_penalty"]
+            step_info["terminal_reason"] = "crash_vehicle"
+        elif vehicle.crash_object:
+            reward = -self.config["crash_object_penalty"]
+            step_info["terminal_reason"] = "crash_object"
+        elif vehicle.crash_sidewalk:
+            reward = -self.config["crash_sidewalk_penalty"]
+            step_info["terminal_reason"] = "crash_sidewalk"
+
+        step_info["total_reward"] = reward
+
+        # === 打印组成部分 ===
+        # print(f"[Step Reward Breakdown] "
+        #     f"out_risk={out_risk_penalty:.3f}, "
+        #     f"ckpt={ckpt_reward:.3f}, "
+        #     f"progress={progress_reward:.3f}, "
+        #     f"speed={speed_reward:.3f}, "
+        #     f"route={route_reward:.3f}, "
+        #     f"time_penalty={-0.05:.3f},"
+        #     f"TOTAL={reward:.3f}")
+
+        return reward, step_info
 
     def setup_engine(self):
         super(MetaDriveEnv, self).setup_engine()

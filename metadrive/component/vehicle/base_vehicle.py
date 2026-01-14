@@ -747,6 +747,7 @@ class BaseVehicle(BaseObject, BaseVehicleState):
         if self.navigation is not None and self.config["navigation_module"]:
             self.navigation.reset(self)
             self.navigation.update_localization(self)
+            # debug prints removed
 
     def _state_check(self):
         """
